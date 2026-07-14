@@ -1,0 +1,8 @@
+# Etat runtime des bots (references de balance, historique Kelly, verrous)
+sentinel_state.json
+alpha_state.json
+
+# Python
+__pycache__/
+*.pyc
+.venv/
