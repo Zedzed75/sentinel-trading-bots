@@ -1,0 +1,27 @@
+name: validation-solo
+
+# Compte de validation de secours : quand un administrateur applique le
+# label "validation-solo" a une PR, le bot github-actions l'approuve.
+# A n'utiliser qu'en l'absence d'un autre developpeur disponible - la
+# pose du label est l'acte de validation, trace dans l'historique de la PR.
+
+on:
+  pull_request:
+    types: [labeled]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  approve:
+    if: github.event.label.name == 'validation-solo'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Approuver la PR (validation de secours)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: >
+          gh pr review "${{ github.event.pull_request.number }}"
+          --approve --repo "${{ github.repository }}"
+          --body "Validation de secours declenchee par le label
+          validation-solo (posee par un administrateur)."
