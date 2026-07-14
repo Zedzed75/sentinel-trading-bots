@@ -172,8 +172,13 @@ La CI GitHub Actions (`.github/workflows/tests.yml`, runner
   `main()`), option "Algo Trading" activee, `pip install -r requirements.txt`.
 - **Une seule instance de chaque bot** (deux instances = course sur les
   signaux et sur les fichiers d'etat).
-- Ordre de lancement conseille : orchestrateur en premier (il pose
-  `risk_scale.json`), puis les bots de trading.
+- **Supervision automatique** : la tache planifiee Windows
+  `SentinelWatchdog` (declencheur : ouverture de session) execute
+  `ops/watchdog.ps1`, qui lance la flotte (orchestrateur en premier),
+  relance tout bot mort en <= 30 s, capture stdout/stderr de chaque bot
+  dans `logs/<bot>.log` (rotation a 10 Mo) et se protege contre les
+  doubles instances. Lancement manuel :
+  `Start-ScheduledTask -TaskName SentinelWatchdog`.
 - Deverrouillage manuel apres coupe-circuit permanent : supprimer (ou
   editer `"locked": false` dans) le fichier d'etat concerne, apres analyse
   de la cause.
