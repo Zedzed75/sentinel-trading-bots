@@ -195,6 +195,12 @@ class TestRisk(unittest.TestCase):
         self.assertEqual(sb.compute_lot(10000, 0.0, 0.01, 0.01, 0.01, 100,
                                         0.01), 0.0)    # SL invalide
 
+    def test_lot_scaled_by_orchestrator(self):
+        args = (10000, 5.0, 0.01, 0.01, 0.01, 100, 0.01)
+        self.assertEqual(sb.compute_lot(*args, scale=0.5), 15.0)  # 30 x 0.5
+        self.assertEqual(sb.compute_lot(*args), 30.0)             # defaut 1.0
+        self.assertEqual(sb.read_risk_scale("_absent_.json"), 1.0)
+
     def test_reached_one_r(self):
         buy = fake_mt5.POSITION_TYPE_BUY
         sell = fake_mt5.POSITION_TYPE_SELL

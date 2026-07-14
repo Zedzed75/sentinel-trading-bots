@@ -16,4 +16,4 @@ jobs:
       - name: Installer les dependances
         run: pip install -r requirements.txt
       - name: Suites de tests (MT5 et yfinance mockes)
-        run: python -m unittest test_sentinel_bot test_sentinel_alpha_compound -v
+        run: python -m unittest test_sentinel_bot test_sentinel_alpha_compound test_sentinel_trend test_sentinel_risk_orchestrator -v

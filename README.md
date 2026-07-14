@@ -9,13 +9,17 @@ concus en TDD. Compte demo recommande.
 |---|---|---|---|
 | `sentinel_bot.py` | Breakout M30 (plage asiatique) + Mean Reversion M5 (Bollinger/RSI) sur XAUUSD, EURUSD, GBPUSD ; filtre VIX asymetrique (or uniquement) | 1.5% du solde/trade, SL=1.5xATR(14) M30, TP 1:2, partiel 50% + break-even a 1R | -4% d'equite/jour (reference 00:00 UTC), verrou jusqu'au lendemain |
 | `sentinel_alpha_compound.py` | Stat-arb : cointegration Brent/WTI (test ADF), entree a \|z\|>=2, sortie convergence/stop temporel 48xM15/stop 4 sigma | Half-Kelly dynamique sur l'equite (plafond 5%, plancher 1% avant 10 trades) | -15% du pic d'equite historique, verrou permanent |
+| `sentinel_trend.py` | Suivi de tendance (time-series momentum) : cassure Donchian 55 H4, sortie canal 20 oppose, sur XAUUSD, EURUSD, GBPUSD, US500, XTIUSD | 1% de l'equite/trade, SL dur 2xATR(14), pas de TP | -15% du pic d'equite historique, verrou permanent |
+| `sentinel_risk_orchestrator.py` | Ne trade pas : vol targeting 10% annualise (ecrit `risk_scale.json`, applique par tous les bots), alerte de concentration directionnelle | reduit les tailles quand la vol du compte monte (plancher 0.25) | -10% GLOBAL du pic d'equite : ferme toute la flotte (magics Sentinel uniquement), verrou permanent |
 
 ## Utilisation
 
 ```
 pip install -r requirements.txt
-python sentinel_bot.py              # bot 1 (multi-actifs)
-python sentinel_alpha_compound.py   # bot 2 (spread Brent/WTI)
+python sentinel_bot.py                 # bot 1 (multi-actifs intraday)
+python sentinel_alpha_compound.py      # bot 2 (spread Brent/WTI)
+python sentinel_trend.py               # bot 3 (trend-following H4)
+python sentinel_risk_orchestrator.py   # bot 4 (superviseur de risque)
 ```
 
 Prerequis : terminal MT5 Pepperstone installe (chemin dans `main()`),
@@ -29,10 +33,10 @@ verrous) sont crees au premier cycle et ne se versionnent pas.
 
 ## Tests
 
-57 tests, MT5 et yfinance mockes (executables sans terminal) :
+81 tests, MT5 et yfinance mockes (executables sans terminal) :
 
 ```
-python -m unittest test_sentinel_bot test_sentinel_alpha_compound -v
+python -m unittest test_sentinel_bot test_sentinel_alpha_compound test_sentinel_trend test_sentinel_risk_orchestrator -v
 ```
 
 La CI (GitHub Actions, `windows-latest`) les execute a chaque push.

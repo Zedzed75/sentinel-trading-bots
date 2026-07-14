@@ -1,6 +1,9 @@
 # Etat runtime des bots (references de balance, historique Kelly, verrous)
 sentinel_state.json
 alpha_state.json
+trend_state.json
+orchestrator_state.json
+risk_scale.json
 
 # Python
 __pycache__/

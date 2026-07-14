@@ -62,6 +62,8 @@ VIX_MAX_FOR_SELL = 25.0
 DEVIATION = 20                # slippage max en points
 STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                           "sentinel_state.json")
+RISK_SCALE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                               "risk_scale.json")
 
 log = logging.getLogger("sentinel")
 
@@ -207,14 +209,23 @@ def reached_one_r(pos_type: int, price_open: float, sl: float,
     return current <= price_open - risk
 
 
+def read_risk_scale(path: str | None = None) -> float:
+    """Facteur [0,1] ecrit par l'orchestrateur de risque ; 1.0 par defaut."""
+    try:
+        with open(path or RISK_SCALE_FILE, encoding="utf-8") as fh:
+            return min(1.0, max(0.0, float(json.load(fh)["scale"])))
+    except (OSError, ValueError, KeyError):
+        return 1.0
+
+
 def compute_lot(balance: float, sl_distance: float, tick_size: float,
                 tick_value: float, vol_min: float, vol_max: float,
-                vol_step: float) -> float:
-    """Volume risquant RISK_PCT du solde sur sl_distance, normalise MT5."""
+                vol_step: float, scale: float = 1.0) -> float:
+    """Volume risquant RISK_PCT du solde (x echelle globale de risque)."""
     if sl_distance <= 0 or tick_size <= 0 or tick_value <= 0:
         return 0.0
     loss_per_lot = (sl_distance / tick_size) * tick_value
-    lots = (balance * RISK_PCT) / loss_per_lot
+    lots = (balance * RISK_PCT * scale) / loss_per_lot
     lots = np.floor(lots / vol_step) * vol_step
     lots = round(lots, 8)
     if lots < vol_min:
@@ -380,7 +391,7 @@ def open_trade(symbol: str, direction: str, magic: int, tag: str) -> bool:
         return False
     lot = compute_lot(acc.balance, sl_dist, sym.trade_tick_size,
                       sym.trade_tick_value, sym.volume_min,
-                      sym.volume_max, sym.volume_step)
+                      sym.volume_max, sym.volume_step, read_risk_scale())
     if lot <= 0:
         log.warning("Lot calcule nul (solde %.2f, SL %.2f), trade ignore.",
                     acc.balance, sl_dist)

@@ -120,6 +120,13 @@ class TestCompounding(unittest.TestCase):
         self.assertGreater(lot_a, 0)
         self.assertAlmostEqual(lot_b, lot_a * 2.0, places=2)
 
+    def test_lots_scaled_by_orchestrator(self):
+        base, _ = self.sizer.lots_for_spread(10000, self.analysis, SYM, SYM)
+        with mock.patch.object(sa, "read_risk_scale", return_value=0.5):
+            half, _ = self.sizer.lots_for_spread(10000, self.analysis,
+                                                 SYM, SYM)
+        self.assertEqual(half, base / 2)
+
     def test_zero_lot_when_too_small(self):
         lot_a, lot_b = self.sizer.lots_for_spread(1.0, self.analysis, SYM, SYM)
         self.assertEqual((lot_a, lot_b), (0.0, 0.0))

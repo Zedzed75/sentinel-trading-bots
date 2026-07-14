@@ -52,6 +52,8 @@ MAX_HISTO_DD = 0.15           # verrou si equite < 85% du pic historique
 DEVIATION = 20
 STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                           "alpha_state.json")
+RISK_SCALE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                               "risk_scale.json")
 
 log = logging.getLogger("alpha")
 
@@ -67,6 +69,15 @@ def price_fmt(symbol: str) -> str:
 def fp(symbol: str, value: float | None) -> str:
     """Prix formate pour les logs selon la precision de l'actif."""
     return "n/a" if value is None else price_fmt(symbol) % value
+
+
+def read_risk_scale(path: str | None = None) -> float:
+    """Facteur [0,1] ecrit par l'orchestrateur de risque ; 1.0 par defaut."""
+    try:
+        with open(path or RISK_SCALE_FILE, encoding="utf-8") as fh:
+            return min(1.0, max(0.0, float(json.load(fh)["scale"])))
+    except (OSError, ValueError, KeyError):
+        return 1.0
 
 
 def kelly_fraction(win_rate: float, rr: float) -> float:
@@ -217,7 +228,7 @@ class KellySizer:
         SL de reference : ecartement du spread jusqu'a STOP_Z sigma. La jambe
         B est dimensionnee par le beta de couverture (neutralite du spread).
         """
-        risk_leg = equity * self.risk_fraction() / 2
+        risk_leg = equity * self.risk_fraction() * read_risk_scale() / 2
         sl_a = STOP_Z * analysis["sigma"]
         lot_a = self.lot_for(risk_leg, sl_a, sym_a)
         beta = abs(analysis["beta"]) or 1.0
