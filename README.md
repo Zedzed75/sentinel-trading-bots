@@ -61,9 +61,12 @@ La branche `master` est protegee :
    et la branche doit etre a jour avec `master`.
 4. **Force-push et suppression de `master` interdits.**
 
-Exception : les administrateurs du depot peuvent contourner ces regles en
-cas d'urgence (deblocage d'un depot mono-mainteneur, hotfix critique) -
-a n'utiliser qu'en dernier recours.
+Ces regles s'appliquent a **tout le monde, administrateurs compris**
+(enforce_admins actif). Consequence pour un depot mono-mainteneur :
+l'auteur d'une PR ne pouvant pas approuver sa propre PR, le merge exige
+un second compte (collaborateur/reviewer). En cas d'urgence absolue,
+l'administrateur peut suspendre temporairement la regle dans
+Settings > Branches, puis la reactiver immediatement apres.
 
 Workflow type :
 
