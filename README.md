@@ -62,10 +62,15 @@ La branche `master` est protegee :
 4. **Force-push et suppression de `master` interdits.**
 
 Ces regles s'appliquent a **tout le monde, administrateurs compris**
-(enforce_admins actif). Consequence pour un depot mono-mainteneur :
-l'auteur d'une PR ne pouvant pas approuver sa propre PR, le merge exige
-un second compte (collaborateur/reviewer). En cas d'urgence absolue,
-l'administrateur peut suspendre temporairement la regle dans
+(enforce_admins actif). L'auteur d'une PR ne peut pas approuver sa
+propre PR.
+
+**Validation de secours (absence d'autre dev)** : un administrateur peut
+apposer le label `validation-solo` sur la PR ; le workflow
+`validation-solo.yml` fait alors approuver la PR par le bot
+`github-actions`. La pose du label est l'acte de validation (tracee dans
+la PR) ; la CI reste obligatoire. En dernier recours absolu,
+l'administrateur peut suspendre temporairement la protection dans
 Settings > Branches, puis la reactiver immediatement apres.
 
 Workflow type :
