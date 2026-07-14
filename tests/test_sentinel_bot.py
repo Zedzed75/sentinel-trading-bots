@@ -31,6 +31,7 @@ fake_mt5.TRADE_RETCODE_DONE = 10009
 sys.modules["MetaTrader5"] = fake_mt5
 sys.modules["yfinance"] = mock.MagicMock()
 
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "bots"))
 import sentinel_bot as sb  # noqa: E402
 
 XAU, XAU_MB, XAU_MR = "XAUUSD.p", 1001, 1002

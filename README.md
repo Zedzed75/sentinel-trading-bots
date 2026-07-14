@@ -1,7 +1,15 @@
 # Sentinel Trading Bots
 
-Deux bots de trading algorithmique MetaTrader 5 (Pepperstone), independants,
-concus en TDD. Compte demo recommande.
+Flotte de bots de trading algorithmique MetaTrader 5 (Pepperstone),
+independants, concus en TDD. Compte demo recommande.
+
+## Structure
+
+```
+bots/     les 4 bots (fichiers autonomes, sans imports croises)
+tests/    les 4 suites de tests (81 tests, MT5 mocke)
+docs/     ARCHITECTURE.md (le code) et STRATEGIE.md (l'investissement)
+```
 
 ## Bots
 
@@ -16,10 +24,10 @@ concus en TDD. Compte demo recommande.
 
 ```
 pip install -r requirements.txt
-python sentinel_bot.py                 # bot 1 (multi-actifs intraday)
-python sentinel_alpha_compound.py      # bot 2 (spread Brent/WTI)
-python sentinel_trend.py               # bot 3 (trend-following H4)
-python sentinel_risk_orchestrator.py   # bot 4 (superviseur de risque)
+python bots/sentinel_risk_orchestrator.py   # bot 4 d'abord (pose risk_scale.json)
+python bots/sentinel_bot.py                 # bot 1 (multi-actifs intraday)
+python bots/sentinel_alpha_compound.py      # bot 2 (spread Brent/WTI)
+python bots/sentinel_trend.py               # bot 3 (trend-following H4)
 ```
 
 Prerequis : terminal MT5 Pepperstone installe (chemin dans `main()`),
@@ -36,7 +44,7 @@ verrous) sont crees au premier cycle et ne se versionnent pas.
 81 tests, MT5 et yfinance mockes (executables sans terminal) :
 
 ```
-python -m unittest test_sentinel_bot test_sentinel_alpha_compound test_sentinel_trend test_sentinel_risk_orchestrator -v
+python -m unittest discover -s tests -v
 ```
 
 La CI (GitHub Actions, `windows-latest`) les execute a chaque push.

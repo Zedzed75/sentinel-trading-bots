@@ -31,6 +31,7 @@ fake_mt5.ORDER_FILLING_IOC = 1
 fake_mt5.TRADE_RETCODE_DONE = 10009
 fake_mt5.TIMEFRAME_H4 = 16388
 
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "bots"))
 import sentinel_trend as st  # noqa: E402
 
 UTC = timezone.utc

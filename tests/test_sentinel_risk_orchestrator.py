@@ -26,6 +26,7 @@ fake_mt5.ORDER_TIME_GTC = 0
 fake_mt5.ORDER_FILLING_IOC = 1
 fake_mt5.TRADE_RETCODE_DONE = 10009
 
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "bots"))
 import sentinel_risk_orchestrator as so  # noqa: E402
 
 UTC = timezone.utc
