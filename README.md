@@ -48,3 +48,28 @@ python -m unittest discover -s tests -v
 ```
 
 La CI (GitHub Actions, `windows-latest`) les execute a chaque push.
+
+## Regles de contribution (protection de branche)
+
+La branche `master` est protegee :
+
+1. **Aucun push direct sur `master`** : tout changement passe par une
+   branche puis une pull request.
+2. **Une validation (review approuvee) est requise** pour merger une PR ;
+   une nouvelle serie de commits invalide les approbations precedentes.
+3. **La CI doit etre verte** (job `test`, les 81 tests) avant le merge,
+   et la branche doit etre a jour avec `master`.
+4. **Force-push et suppression de `master` interdits.**
+
+Exception : les administrateurs du depot peuvent contourner ces regles en
+cas d'urgence (deblocage d'un depot mono-mainteneur, hotfix critique) -
+a n'utiliser qu'en dernier recours.
+
+Workflow type :
+
+```
+git checkout -b feature/ma-modif
+# ... commits ...
+git push -u origin feature/ma-modif
+gh pr create            # puis review + CI verte -> merge
+```
