@@ -92,6 +92,7 @@ pas oblige de payer pour le verifier en risque plein.
 **Recommandation trend** : risque divise par deux sur EURUSD, GBPUSD et
 XTIUSD (ou suspension), plein risque conserve sur XAUUSD et US500.
 Reevaluation quand le journal reel atteint 30 trades par symbole.
+*Appliquee le 2026-07-15* (`risk_mult` dans `TREND_PORTFOLIO`).
 
 ### Breakout (plage asiatique, SL 1.5xATR, TP 2R, partiel a 1R)
 
@@ -114,6 +115,8 @@ deux moities, ~650 trades chacun : l'echantillon est large). Conserver
 XAUUSD sous surveillance : si le journal reel confirme PF < 1 sur 30j,
 appliquer la reduction de moitie. Ne PAS retoucher la fenetre horaire
 sur la seule foi du backtest (bruit).
+*Appliquee le 2026-07-15* (drapeau `breakout` dans `CONFIG_PORTFOLIO` ;
+la reversion continue sur les trois actifs).
 
 ### Reversion et stat-arb : non backtestees
 

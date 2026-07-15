@@ -35,13 +35,16 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "bots"))
 import sentinel_bot as sb  # noqa: E402
 
 XAU, XAU_MB, XAU_MR = "XAUUSD.p", 1001, 1002
-ACTIVE = {  # portefeuille resolu tel que produit par resolve_symbols()
+ACTIVE = {  # portefeuille resolu, breakout actif partout (exerce la logique)
     "XAUUSD": {"symbol": "XAUUSD.p", "magic_breakout": 1001,
-               "magic_reversion": 1002, "vix_filter": True},
+               "magic_reversion": 1002, "vix_filter": True,
+               "breakout": True},
     "EURUSD": {"symbol": "EURUSD.p", "magic_breakout": 2001,
-               "magic_reversion": 2002, "vix_filter": False},
+               "magic_reversion": 2002, "vix_filter": False,
+               "breakout": True},
     "GBPUSD": {"symbol": "GBPUSD.p", "magic_breakout": 3001,
-               "magic_reversion": 3002, "vix_filter": False},
+               "magic_reversion": 3002, "vix_filter": False,
+               "breakout": True},
 }
 UTC = timezone.utc
 OK_RESULT = SimpleNamespace(retcode=10009, comment="done")
@@ -407,6 +410,38 @@ class TestRunCycle(unittest.TestCase):
                          now=datetime(2026, 7, 14, 19, 0, tzinfo=UTC))
         fake_mt5.copy_rates_from_pos.assert_not_called()
         fake_mt5.order_send.assert_not_called()
+
+    def test_production_config_suspends_breakout_on_forex(self):
+        # decision du 2026-07-15 (docs/AMELIORATION_CONTINUE.md section 5)
+        self.assertTrue(sb.CONFIG_PORTFOLIO["XAUUSD"]["breakout"])
+        self.assertFalse(sb.CONFIG_PORTFOLIO["EURUSD"]["breakout"])
+        self.assertFalse(sb.CONFIG_PORTFOLIO["GBPUSD"]["breakout"])
+
+    def test_breakout_disabled_symbol_skips_m30_scan(self):
+        active = {"EURUSD": {"symbol": "EURUSD.p", "magic_breakout": 2001,
+                             "magic_reversion": 2002, "vix_filter": False,
+                             "breakout": False}}
+        fake_mt5.account_info.return_value = SimpleNamespace(
+            balance=10000.0, equity=10000.0)
+        with mock.patch.object(sb, "FORCE_TRADING_HOURS", False):
+            sb.run_cycle(active, self.guard, self.macro, {},
+                         now=datetime(2026, 7, 14, 10, 0, tzinfo=UTC))
+        fake_mt5.copy_rates_from_pos.assert_not_called()   # fenetre breakout
+
+    def test_breakout_disabled_keeps_reversion(self):
+        active = {"EURUSD": {"symbol": "EURUSD.p", "magic_breakout": 2001,
+                             "magic_reversion": 2002, "vix_filter": False,
+                             "breakout": False}}
+        fake_mt5.account_info.return_value = SimpleNamespace(
+            balance=10000.0, equity=10000.0)
+        fake_mt5.copy_rates_from_pos.return_value = [
+            {"time": 1752400000 + i * 300, "open": 2000.0, "high": 2001.0,
+             "low": 1999.0, "close": 2000.0} for i in range(40)]
+        with mock.patch.object(sb, "FORCE_TRADING_HOURS", False):
+            sb.run_cycle(active, self.guard, self.macro, {},
+                         now=datetime(2026, 7, 14, 14, 0, tzinfo=UTC))
+        tfs = {c[0][1] for c in fake_mt5.copy_rates_from_pos.call_args_list}
+        self.assertEqual(tfs, {fake_mt5.TIMEFRAME_M5})     # M30 jamais lu
 
     def test_windows_differ_per_strategy(self):
         # 10:00 UTC : breakout actif (M30 scanne), reversion fermee (pas de M5)

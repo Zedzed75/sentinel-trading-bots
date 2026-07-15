@@ -21,7 +21,10 @@ hors broker CFD) : les bots cherchent l'alpha, le coeur assure le beta.
 ### Bot 1 - Intraday multi-actifs (retour a la moyenne + breakout)
 
 Deux effets intrajournaliers exploites sur XAUUSD/EURUSD/GBPUSD, chacun
-dans sa propre fenetre horaire (UTC) :
+dans sa propre fenetre horaire (UTC). Depuis le 2026-07-15, le breakout
+est suspendu sur EURUSD et GBPUSD (backtest structurellement negatif,
+~650 trades par paire - voir AMELIORATION_CONTINUE.md section 5) ; la
+reversion reste active sur les trois actifs.
 
 - **Breakout de la plage asiatique** (M30, entrees 08h-16h) : la session
   asiatique comprime la volatilite ; la cassure de sa plage a l'ouverture
@@ -81,6 +84,13 @@ filtre horaire serait du sur-ajustement (principe n. 4, section 5). Seule
 exception operationnelle : aucune ouverture entre 21h et 23h UTC
 (rollover, spreads elargis) - une cassure detectee dans cette plage est
 reprise des la sortie du blackout, les sorties restent libres.
+
+Depuis le 2026-07-15, le risque par trade est reduit de moitie (0.5%)
+sur EURUSD, GBPUSD et XTIUSD : le backtest 2 ans y est negatif sur
+toutes les variantes de parametres (AMELIORATION_CONTINUE.md section 5).
+La litterature etablissant le momentum sur longue periode, c'est une
+reduction reversible, pas une suppression - reevaluation a 30 trades
+reels par actif.
 
 Profil : asymetrie **positive** (beaucoup de petites pertes, gains rares
 et larges), exactement le miroir des bots 1-2. Surtout, le trend-following

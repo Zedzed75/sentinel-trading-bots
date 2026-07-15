@@ -26,13 +26,20 @@ import MetaTrader5 as mt5
 # ----------------------------------------------------------------------------
 # Configuration
 # ----------------------------------------------------------------------------
-# Portefeuille diversifie multi-classes : nom canonique -> magic + replis
+# Portefeuille diversifie multi-classes : nom canonique -> magic + replis.
+# risk_mult : facteur applique au risque par trade de l'actif. 0.5 sur
+# EURUSD/GBPUSD/XTIUSD depuis le 2026-07-15 : backtest 2 ans negatif sur
+# toutes les variantes et les deux moities (docs/AMELIORATION_CONTINUE.md,
+# section 5) ; reevaluation prevue a 30 trades reels par actif.
 TREND_PORTFOLIO = {
-    "XAUUSD": {"magic": 5001, "fallback": ["XAUUSD.p", "GOLD"]},
-    "EURUSD": {"magic": 5002, "fallback": ["EURUSD.p"]},
-    "GBPUSD": {"magic": 5003, "fallback": ["GBPUSD.p"]},
-    "US500":  {"magic": 5004, "fallback": ["US500.p", "SP500", "SPX500"]},
-    "XTIUSD": {"magic": 5005, "fallback": ["XTIUSD.p", "SpotCrude", "USOIL"]},
+    "XAUUSD": {"magic": 5001, "fallback": ["XAUUSD.p", "GOLD"],
+               "risk_mult": 1.0},
+    "EURUSD": {"magic": 5002, "fallback": ["EURUSD.p"], "risk_mult": 0.5},
+    "GBPUSD": {"magic": 5003, "fallback": ["GBPUSD.p"], "risk_mult": 0.5},
+    "US500":  {"magic": 5004, "fallback": ["US500.p", "SP500", "SPX500"],
+               "risk_mult": 1.0},
+    "XTIUSD": {"magic": 5005, "fallback": ["XTIUSD.p", "SpotCrude", "USOIL"],
+               "risk_mult": 0.5},
 }
 TREND_MAGICS = {cfg["magic"] for cfg in TREND_PORTFOLIO.values()}
 
@@ -184,8 +191,10 @@ def resolve_symbols() -> dict:
                       if mt5.symbol_select(s, True)
                       and mt5.symbol_info(s) is not None), None)
         if found:
-            active[name] = {"symbol": found, "magic": cfg["magic"]}
-            log.info("Actif %s -> %s", name, found)
+            active[name] = {"symbol": found, "magic": cfg["magic"],
+                            "risk_mult": cfg.get("risk_mult", 1.0)}
+            log.info("Actif %s -> %s (risque x%.1f)", name, found,
+                     active[name]["risk_mult"])
         else:
             log.warning("Actif %s indisponible, retire : %s", name,
                         mt5.last_error())
@@ -212,7 +221,7 @@ def send_order(request: dict):
 
 
 def open_trend_trade(symbol: str, direction: str, magic: int,
-                     df: pd.DataFrame) -> bool:
+                     df: pd.DataFrame, risk_mult: float = 1.0) -> bool:
     """Entree au marche, SL dur a 2xATR, sans TP (sortie par canal)."""
     acc = mt5.account_info()
     sym = mt5.symbol_info(symbol)
@@ -224,7 +233,7 @@ def open_trend_trade(symbol: str, direction: str, magic: int,
         return False
     lot = compute_lot(acc.equity, sl_dist, sym.trade_tick_size,
                       sym.trade_tick_value, sym.volume_min, sym.volume_max,
-                      sym.volume_step, read_risk_scale())
+                      sym.volume_step, read_risk_scale() * risk_mult)
     if lot <= 0:
         log.warning("[%s] lot nul, entree ignoree.", symbol)
         return False
@@ -325,7 +334,8 @@ def scan_symbol(name: str, cfg: dict, timeframe: int, last_bars: dict,
                      name, ROLLOVER_HOUR_START, ROLLOVER_HOUR_END)
             return
         log.info("[TREND] cassure Donchian %s %s", ENTRY_CHANNEL, name)
-        open_trend_trade(symbol, sig, magic, closed)
+        open_trend_trade(symbol, sig, magic, closed,
+                         cfg.get("risk_mult", 1.0))
 
 
 def close_all_trend():

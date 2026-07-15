@@ -26,13 +26,21 @@ import yfinance as yf
 # (Pepperstone Razor expose le suffixe .p ; le nom canonique est teste d'abord)
 # vix_filter : True = bloquer les SELL si VIX > 25 (valeur refuge, or
 # uniquement) ; False = shorts autorises en crise (paires forex vs USD)
+# breakout : False = strategie A suspendue sur l'actif (la reversion
+# continue). EURUSD et GBPUSD suspendus le 2026-07-15 : PF < 1 sur les
+# deux moities du backtest, ~650 trades chacun (structurel, pas un
+# parametre - docs/AMELIORATION_CONTINUE.md, section 5). Reevaluation
+# trimestrielle prevue.
 CONFIG_PORTFOLIO = {
     "XAUUSD": {"magic_breakout": 1001, "magic_reversion": 1002,
-               "fallback": ["XAUUSD.p", "GOLD"], "vix_filter": True},
+               "fallback": ["XAUUSD.p", "GOLD"], "vix_filter": True,
+               "breakout": True},
     "EURUSD": {"magic_breakout": 2001, "magic_reversion": 2002,
-               "fallback": ["EURUSD.p"], "vix_filter": False},
+               "fallback": ["EURUSD.p"], "vix_filter": False,
+               "breakout": False},
     "GBPUSD": {"magic_breakout": 3001, "magic_reversion": 3002,
-               "fallback": ["GBPUSD.p"], "vix_filter": False},
+               "fallback": ["GBPUSD.p"], "vix_filter": False,
+               "breakout": False},
 }
 
 RISK_PCT = 0.015              # 1.5% du solde par trade
@@ -377,8 +385,11 @@ def resolve_symbols() -> dict:
             active[name] = {"symbol": found,
                             "magic_breakout": cfg["magic_breakout"],
                             "magic_reversion": cfg["magic_reversion"],
-                            "vix_filter": cfg.get("vix_filter", True)}
-            log.info("Actif %s -> symbole broker %s", name, found)
+                            "vix_filter": cfg.get("vix_filter", True),
+                            "breakout": cfg.get("breakout", True)}
+            log.info("Actif %s -> symbole broker %s%s", name, found,
+                     "" if active[name]["breakout"]
+                     else " (breakout suspendu)")
         else:
             log.warning("Actif %s indisponible chez le broker, retire du "
                         "portefeuille : %s", name, mt5.last_error())
@@ -555,7 +566,9 @@ def scan_symbol(name: str, cfg: dict, macro: MacroFilter,
     manage_positions(symbol, (mb, mr))
 
     # --- Strategie A : breakout M30 (sur nouvelle bougie cloturee) ---
-    if in_trading_hours(now, BREAKOUT_HOUR_START, BREAKOUT_HOUR_END):
+    if (cfg.get("breakout", True)
+            and in_trading_hours(now, BREAKOUT_HOUR_START,
+                                 BREAKOUT_HOUR_END)):
         df_m30 = get_rates(symbol, mt5.TIMEFRAME_M30, 96)
         if df_m30 is not None and len(df_m30) > 2:
             closed = df_m30.iloc[:-1]  # derniere ligne = bougie en cours
