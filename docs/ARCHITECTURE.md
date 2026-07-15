@@ -11,6 +11,8 @@ fichier unique (< 600 lignes), connectes au meme terminal MetaTrader 5
 
 ```
 bots/sentinel_bot.py               bot 1 : intraday multi-actifs (M5/M30)
+bots/sentinel_signals.py           fonctions pures du bot 1 (indicateurs,
+                                   signaux, fenetres) - pas un processus
 bots/sentinel_alpha_compound.py    bot 2 : stat-arb Brent/WTI (M15)
 bots/sentinel_trend.py             bot 3 : trend-following (H4)
 bots/sentinel_risk_orchestrator.py bot 4 : superviseur de risque (ne trade pas)
@@ -19,9 +21,12 @@ bots/sentinel_risk_orchestrator.py bot 4 : superviseur de risque (ne trade pas)
 Les tests sont dans `tests/` (un fichier par bot) et la documentation dans
 `docs/`.
 
-Il n'y a **aucun import entre les bots** : chaque fichier est autonome et
-peut etre lance, arrete ou mis a jour sans toucher aux autres. La
-coordination passe par deux mecanismes decouples :
+Il n'y a **aucun import entre les bots** : chaque bot est autonome et
+peut etre lance, arrete ou mis a jour sans toucher aux autres. Seule
+exception au fichier unique : le bot 1 delegue ses fonctions pures a
+`sentinel_signals.py` (module sans acces MT5 ni reseau, respect de la
+limite de 600 lignes par fichier). La coordination passe par deux
+mecanismes decouples :
 
 - **Les magic numbers MT5** : chaque strategie signe ses ordres, ce qui
   permet a chaque bot de ne gerer que ses propres positions, et a
@@ -80,7 +85,8 @@ Conventions transverses :
 
 - `CONFIG_PORTFOLIO` : XAUUSD, EURUSD, GBPUSD avec magics et flag
   `vix_filter` par actif.
-- Indicateurs : `rsi` (Wilder), `bollinger`, `atr` (Wilder),
+- Indicateurs (dans `sentinel_signals.py`, comme tous les signaux et
+  fenetres horaires) : `rsi` (Wilder), `bollinger`, `atr` (Wilder),
   `is_flat_range` (ecart-type Bollinger plat **et** moyenne mobile plate -
   le second critere evite de prendre une tendance reguliere pour un range).
 - Signaux : `breakout_signal` (cloture M30 hors plage asiatique 22h-08h UTC
@@ -146,7 +152,7 @@ Structure en classes :
 
 ## 4. Tests (TDD)
 
-81 tests, executables **sans terminal MT5** : le module `MetaTrader5` (et
+Une suite par module, executable **sans terminal MT5** : le module `MetaTrader5` (et
 `yfinance` pour le bot 1) est remplace par un `MagicMock` injecte dans
 `sys.modules` avant l'import du bot. `statsmodels` est reel dans les tests
 du bot 2 (series synthetiques cointegrees et marches aleatoires
@@ -163,8 +169,11 @@ persistance des verrous apres redemarrage, un signal par bougie cloturee,
 et preuve du compounding (lots proportionnels a l'equite).
 
 La CI GitHub Actions (`.github/workflows/tests.yml`, runner
-`windows-latest` car le package MetaTrader5 est Windows-only) execute les
-4 suites a chaque push.
+`windows-latest` car le package MetaTrader5 est Windows-only) execute
+`ruff check`, la garde de limite de lignes (avertissement au-dela de
+600 lignes par fichier - relaye sur Telegram si les secrets
+`TELEGRAM_TOKEN`/`TELEGRAM_CHAT_ID` sont configures -, echec au-dela
+de 700) puis toutes les suites a chaque push.
 
 ## 5. Operations
 
