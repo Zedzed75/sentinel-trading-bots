@@ -41,8 +41,15 @@ ATR_SL_MULT = 1.5             # Distance_SL = 1.5 * ATR(14) M30
 RR_RATIO = 2.0                # TP = 2 * Distance_SL
 DAILY_DD_LIMIT = 0.04         # coupe-circuit a -4% d'equite vs balance du jour
 
-TRADE_HOUR_START = 13         # nouvelles positions autorisees 13:00-18:00 UTC
-TRADE_HOUR_END = 18
+# Fenetres d'entree par strategie (UTC reel). Le breakout se joue des la
+# fin de la plage asiatique (cassure fraiche a l'ouverture occidentale,
+# l'edge documente des "opening range breakouts") jusqu'a la fin du
+# recouvrement Londres/NY ; la reversion sur le recouvrement et l'apres-midi
+# NY (calme propice au range). La gestion des positions n'est jamais bloquee.
+BREAKOUT_HOUR_START = 8
+BREAKOUT_HOUR_END = 16
+REVERSION_HOUR_START = 13
+REVERSION_HOUR_END = 18
 FORCE_TRADING_HOURS = False    # TEMPORAIRE : bypass horaires pour test direct
                               # >>> remettre a False avant la production <<<
 ASIA_HOUR_START = 22          # plage asiatique 22:00 -> 08:00 UTC
@@ -131,11 +138,11 @@ def fp(symbol: str, value: float | None) -> str:
     return "n/a" if value is None else price_fmt(symbol) % value
 
 
-def in_trading_hours(now: datetime) -> bool:
-    """Nouvelles positions uniquement entre 13:00 et 18:00 UTC."""
+def in_trading_hours(now: datetime, start: int, end: int) -> bool:
+    """Nouvelles positions uniquement dans [start, end) UTC."""
     if FORCE_TRADING_HOURS:  # bypass temporaire pour test en direct
         return True
-    return TRADE_HOUR_START <= now.hour < TRADE_HOUR_END
+    return start <= now.hour < end
 
 
 def asian_range(df_m30: pd.DataFrame, now: datetime):
@@ -352,6 +359,31 @@ def resolve_symbols() -> dict:
     return active
 
 
+_SERVER_OFFSET = {"hours": 0.0, "at": None}
+
+
+def server_offset_hours(symbol: str, now: datetime | None = None) -> float:
+    """Decalage (heures) entre l'horloge du serveur MT5 et l'UTC reel.
+
+    Les bougies MT5 sont estampillees en heure serveur (UTC+2/+3 chez
+    Pepperstone) : sans conversion, toutes les fenetres horaires (plage
+    asiatique en tete) seraient decalees. On mesure l'ecart entre un tick
+    recent et l'horloge locale UTC, arrondi a la demi-heure, memorise 1 h.
+    Sans tick frais (week-end), la derniere valeur connue est conservee.
+    """
+    now = now or datetime.now(timezone.utc)
+    cache = _SERVER_OFFSET
+    if cache["at"] is not None and now - cache["at"] < timedelta(hours=1):
+        return cache["hours"]
+    ts = getattr(mt5.symbol_info_tick(symbol), "time", None)
+    if isinstance(ts, (int, float)) and ts > 0:
+        delta_h = (ts - now.timestamp()) / 3600
+        if abs(delta_h) <= 13:            # tick frais, offset plausible
+            cache["hours"] = round(delta_h * 2) / 2
+            cache["at"] = now
+    return cache["hours"]
+
+
 def get_rates(symbol: str, timeframe: int, count: int) -> pd.DataFrame | None:
     rates = mt5.copy_rates_from_pos(symbol, timeframe, 0, count)
     if rates is None or len(rates) == 0:
@@ -359,7 +391,8 @@ def get_rates(symbol: str, timeframe: int, count: int) -> pd.DataFrame | None:
                     symbol, timeframe, mt5.last_error())
         return None
     df = pd.DataFrame(rates)
-    df["time"] = pd.to_datetime(df["time"], unit="s", utc=True)
+    df["time"] = (pd.to_datetime(df["time"], unit="s", utc=True)
+                  - pd.Timedelta(hours=server_offset_hours(symbol)))
     return df
 
 
@@ -495,36 +528,35 @@ def scan_symbol(name: str, cfg: dict, macro: MacroFilter,
     vf = cfg.get("vix_filter", True)
     manage_positions(symbol, (mb, mr))
 
-    if not in_trading_hours(now):
-        return
-
     # --- Strategie A : breakout M30 (sur nouvelle bougie cloturee) ---
-    df_m30 = get_rates(symbol, mt5.TIMEFRAME_M30, 96)
-    if df_m30 is not None and len(df_m30) > 2:
-        closed = df_m30.iloc[:-1]  # la derniere ligne est la bougie en cours
-        bar_time = closed["time"].iloc[-1]
-        if last_bars.get((name, "m30")) != bar_time:
-            last_bars[(name, "m30")] = bar_time
-            hi, lo = asian_range(closed, now)
-            sig = apply_macro_filter(breakout_signal(closed, hi, lo),
-                                     macro.vix(now), vf)
-            if sig and not has_open_position(symbol, mb):
-                log.info("[%s] Signal BREAKOUT %s (Asie H=%s L=%s)",
-                         name, sig, fp(symbol, hi), fp(symbol, lo))
-                open_trade(symbol, sig, mb, "sentinel_breakout")
+    if in_trading_hours(now, BREAKOUT_HOUR_START, BREAKOUT_HOUR_END):
+        df_m30 = get_rates(symbol, mt5.TIMEFRAME_M30, 96)
+        if df_m30 is not None and len(df_m30) > 2:
+            closed = df_m30.iloc[:-1]  # derniere ligne = bougie en cours
+            bar_time = closed["time"].iloc[-1]
+            if last_bars.get((name, "m30")) != bar_time:
+                last_bars[(name, "m30")] = bar_time
+                hi, lo = asian_range(closed, now)
+                sig = apply_macro_filter(breakout_signal(closed, hi, lo),
+                                         macro.vix(now), vf)
+                if sig and not has_open_position(symbol, mb):
+                    log.info("[%s] Signal BREAKOUT %s (Asie H=%s L=%s)",
+                             name, sig, fp(symbol, hi), fp(symbol, lo))
+                    open_trade(symbol, sig, mb, "sentinel_breakout")
 
     # --- Strategie B : mean reversion M5 (sur nouvelle bougie cloturee) ---
-    df_m5 = get_rates(symbol, mt5.TIMEFRAME_M5, 120)
-    if df_m5 is not None and len(df_m5) > 2:
-        closed = df_m5.iloc[:-1]
-        bar_time = closed["time"].iloc[-1]
-        if last_bars.get((name, "m5")) != bar_time:
-            last_bars[(name, "m5")] = bar_time
-            sig = apply_macro_filter(reversion_signal(closed),
-                                     macro.vix(now), vf)
-            if sig and not has_open_position(symbol, mr):
-                log.info("[%s] Signal REVERSION %s", name, sig)
-                open_trade(symbol, sig, mr, "sentinel_reversion")
+    if in_trading_hours(now, REVERSION_HOUR_START, REVERSION_HOUR_END):
+        df_m5 = get_rates(symbol, mt5.TIMEFRAME_M5, 120)
+        if df_m5 is not None and len(df_m5) > 2:
+            closed = df_m5.iloc[:-1]
+            bar_time = closed["time"].iloc[-1]
+            if last_bars.get((name, "m5")) != bar_time:
+                last_bars[(name, "m5")] = bar_time
+                sig = apply_macro_filter(reversion_signal(closed),
+                                         macro.vix(now), vf)
+                if sig and not has_open_position(symbol, mr):
+                    log.info("[%s] Signal REVERSION %s", name, sig)
+                    open_trade(symbol, sig, mr, "sentinel_reversion")
 
 
 def run_cycle(active: dict, guard: DayGuard, macro: MacroFilter,

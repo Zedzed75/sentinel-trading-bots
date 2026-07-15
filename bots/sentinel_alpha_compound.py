@@ -43,6 +43,13 @@ EXIT_Z = 0.5                  # convergence atteinte
 STOP_Z = 4.0                  # ecartement anormal : coupure immediate
 MAX_BARS_IN_TRADE = 48        # stop temporel : N bougies sans convergence
 
+# Nouvelles entrees uniquement quand Brent ET WTI sont liquides (sessions
+# Londres/NY) : la nuit et pendant le rollover (~21h-22h UTC) les spreads
+# s'elargissent et polluent le z-score. Les sorties (convergence, stops)
+# restent permises 24h/24 - on ne retient jamais une protection.
+ENTRY_HOUR_START = 7
+ENTRY_HOUR_END = 20
+
 MIN_TRADES_FOR_KELLY = 10     # avant : risque par defaut
 DEFAULT_RISK = 0.01           # 1% tant que l'historique est insuffisant
 KELLY_DIVISOR = 2.0           # Half-Kelly
@@ -69,6 +76,11 @@ def price_fmt(symbol: str) -> str:
 def fp(symbol: str, value: float | None) -> str:
     """Prix formate pour les logs selon la precision de l'actif."""
     return "n/a" if value is None else price_fmt(symbol) % value
+
+
+def entries_allowed(now: datetime) -> bool:
+    """Nouveau spread uniquement dans [ENTRY_HOUR_START, ENTRY_HOUR_END) UTC."""
+    return ENTRY_HOUR_START <= now.hour < ENTRY_HOUR_END
 
 
 def read_risk_scale(path: str | None = None) -> float:
@@ -425,6 +437,11 @@ class PairTrader:
                     self.close_spread(reason)
             return
         signal = self.engine.entry_signal(analysis)
+        if signal and not entries_allowed(now):
+            log.info("Signal %s ignore hors fenetre %02d-%02dh UTC "
+                     "(liquidite/rollover) ; reevalue a la prochaine bougie.",
+                     signal, ENTRY_HOUR_START, ENTRY_HOUR_END)
+            return
         if signal:
             log.info("Signal %s (z=%.2f, p-ADF=%.4f)", signal,
                      analysis["z"], analysis["pvalue"])
