@@ -277,6 +277,38 @@ class TestExecution(unittest.TestCase):
         self.assertIsNone(self.state.open)
         self.assertEqual(self.state.trades, [-15.0])
 
+    def test_entries_allowed_window(self):
+        d = lambda h: datetime(2026, 7, 14, h, tzinfo=UTC)
+        self.assertFalse(sa.entries_allowed(d(6)))
+        self.assertTrue(sa.entries_allowed(d(7)))
+        self.assertTrue(sa.entries_allowed(d(19)))
+        self.assertFalse(sa.entries_allowed(d(20)))
+        self.assertFalse(sa.entries_allowed(d(22)))   # rollover
+
+    def test_entry_blocked_outside_liquidity_window(self):
+        # signal valide a 21h UTC : aucune jambe ouverte, reevalue plus tard
+        fake_mt5.positions_get.return_value = []
+        night = self.now.replace(hour=21)
+        self.trader.manage(self.analysis, 10000, night)
+        fake_mt5.order_send.assert_not_called()
+        self.assertIsNone(self.state.open)
+
+    def test_exit_allowed_outside_entry_window(self):
+        # stop temporel atteint a 21h : la protection n'est jamais retenue
+        night = self.now.replace(hour=21)
+        entry = night - timedelta(minutes=sa.TF_MINUTES
+                                  * sa.MAX_BARS_IN_TRADE)
+        self.state.open = {"direction": "BUY_SPREAD",
+                           "entry_time": entry.isoformat(),
+                           "beta": 1.0, "sigma": 0.5}
+        pos_a = SimpleNamespace(ticket=1, symbol="XBRUSD.p", type=0,
+                                volume=1.0, profit=10.0, magic=sa.MAGIC_ALPHA)
+        pos_b = SimpleNamespace(ticket=2, symbol="XTIUSD.p", type=1,
+                                volume=1.0, profit=-25.0, magic=sa.MAGIC_ALPHA)
+        fake_mt5.positions_get.return_value = [pos_a, pos_b]
+        self.trader.manage(dict(self.analysis, z=1.5), 10000, night)
+        self.assertIsNone(self.state.open)
+
     def test_run_cycle_drawdown_lock_closes_spread(self):
         self.state.peak_equity = 10000.0
         fake_mt5.account_info.return_value = SimpleNamespace(equity=8400.0)

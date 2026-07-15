@@ -100,6 +100,16 @@ class TestBuildTrades(unittest.TestCase):
                  _deal(14, entry=1, time=T0 + 60, magic=9999, profit=50.0)]
         self.assertEqual(sa.build_trades(deals), [])
 
+    def test_server_offset_converts_times_to_utc(self):
+        # deals estampilles UTC+3 : offset_h=3 rend les heures en UTC reel
+        deals = [_deal(15, entry=0, time=T0),
+                 _deal(15, entry=1, time=T0 + 7200, profit=10.0)]
+        t = sa.build_trades(deals, offset_h=3.0)[0]
+        self.assertEqual(t["open_time"],
+                         datetime.fromtimestamp(T0, tz=UTC)
+                         - timedelta(hours=3))
+        self.assertAlmostEqual(t["duration_h"], 2.0)   # duree inchangee
+
     def test_trades_sorted_by_close_time(self):
         deals = [
             _deal(20, entry=0, time=T0), _deal(20, entry=1, time=T0 + 9999),

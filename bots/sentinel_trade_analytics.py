@@ -55,12 +55,42 @@ log = logging.getLogger("analytics")
 # ----------------------------------------------------------------------------
 # Reconstitution des trades a partir des deals bruts
 # ----------------------------------------------------------------------------
-def build_trades(deals) -> list[dict]:
+_SERVER_OFFSET = {"hours": 0.0, "at": None}
+_OFFSET_SYMBOLS = ("XAUUSD", "XAUUSD.p", "GOLD", "EURUSD", "EURUSD.p")
+
+
+def server_offset_hours(now: datetime | None = None) -> float:
+    """Decalage (heures) entre l'horloge du serveur MT5 et l'UTC reel.
+
+    Les deals MT5 sont estampilles en heure serveur (UTC+2/+3 chez
+    Pepperstone) : on mesure l'ecart tick recent vs horloge locale UTC,
+    arrondi a la demi-heure, memorise 1 h. Sans tick frais (week-end),
+    la derniere valeur connue est conservee.
+    """
+    now = now or datetime.now(timezone.utc)
+    cache = _SERVER_OFFSET
+    if cache["at"] is not None and now - cache["at"] < timedelta(hours=1):
+        return cache["hours"]
+    for name in _OFFSET_SYMBOLS:
+        if not mt5.symbol_select(name, True):
+            continue
+        ts = getattr(mt5.symbol_info_tick(name), "time", None)
+        if isinstance(ts, (int, float)) and ts > 0:
+            delta_h = (ts - now.timestamp()) / 3600
+            if abs(delta_h) <= 13:        # tick frais, offset plausible
+                cache["hours"] = round(delta_h * 2) / 2
+                cache["at"] = now
+                break
+    return cache["hours"]
+
+
+def build_trades(deals, offset_h: float = 0.0) -> list[dict]:
     """Un trade ferme par position_id (magics Sentinel uniquement).
 
     Les sorties partielles sont sommees ; une position dont le volume de
     sortie ne couvre pas l'entree (encore ouverte) est ignoree.
     PnL net = profit + commission + swap de tous les deals de la position.
+    offset_h (heure serveur - UTC) convertit les horodatages en UTC reel.
     """
     by_pos: dict[int, list] = {}
     for d in deals or []:
@@ -77,7 +107,8 @@ def build_trades(deals) -> list[dict]:
         if sum(d.volume for d in outs) < vol_in - 1e-8:
             continue
         entry = min(ins, key=lambda d: d.time)
-        close_ts = max(d.time for d in outs)
+        close_ts = max(d.time for d in outs) - offset_h * 3600
+        open_ts = entry.time - offset_h * 3600
         pnl = sum(d.profit + d.commission + d.swap for d in group)
         trades.append({
             "position_id": pos_id,
@@ -87,9 +118,9 @@ def build_trades(deals) -> list[dict]:
             "direction": ("long" if entry.type == mt5.DEAL_TYPE_BUY
                           else "short"),
             "volume": vol_in,
-            "open_time": datetime.fromtimestamp(entry.time, tz=timezone.utc),
+            "open_time": datetime.fromtimestamp(open_ts, tz=timezone.utc),
             "close_time": datetime.fromtimestamp(close_ts, tz=timezone.utc),
-            "duration_h": round((close_ts - entry.time) / 3600, 2),
+            "duration_h": round((close_ts - open_ts) / 3600, 2),
             "pnl": round(pnl, 2),
         })
     trades.sort(key=lambda t: t["close_time"])
@@ -244,8 +275,8 @@ def render_html(trades: list[dict], now: datetime) -> str:
 </style>
 </head><body>
 <h1>Analyse des trades Sentinel <small>mise a jour
-{now:%Y-%m-%d %H:%M} UTC - PnL nets de frais et swap, magics Sentinel
-uniquement</small></h1>
+{now:%Y-%m-%d %H:%M} UTC - PnL nets de frais et swap, horaires convertis
+en UTC reel, magics Sentinel uniquement</small></h1>
 {body}
 </body></html>
 """
@@ -256,11 +287,12 @@ uniquement</small></h1>
 # ----------------------------------------------------------------------------
 def run_cycle(now: datetime | None = None):
     now = now or datetime.now(timezone.utc)
+    # marge d'un jour : les deals sont estampilles en heure serveur (UTC+2/3)
     deals = mt5.history_deals_get(now - timedelta(days=HISTORY_DAYS),
-                                  now + timedelta(minutes=5))
+                                  now + timedelta(days=1))
     if deals is None:
         raise ConnectionError(f"history_deals_get() KO : {mt5.last_error()}")
-    trades = build_trades(deals)
+    trades = build_trades(deals, server_offset_hours(now))
     os.makedirs(LOG_DIR, exist_ok=True)
     write_trades_csv(trades, TRADES_CSV)
     _write_atomic(REPORT_HTML, render_html(trades, now))

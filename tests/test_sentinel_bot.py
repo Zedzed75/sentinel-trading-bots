@@ -89,19 +89,57 @@ class TestIndicators(unittest.TestCase):
 
 # --- Horaires & plage asiatique -----------------------------------------------
 class TestSessions(unittest.TestCase):
-    def test_trading_hours_window(self):
+    def test_breakout_window_8_to_16(self):
         d = lambda h, m=0: datetime(2026, 7, 14, h, m, tzinfo=UTC)
+        w = (sb.BREAKOUT_HOUR_START, sb.BREAKOUT_HOUR_END)
         with mock.patch.object(sb, "FORCE_TRADING_HOURS", False):
-            self.assertFalse(sb.in_trading_hours(d(12, 59)))
-            self.assertTrue(sb.in_trading_hours(d(13)))
-            self.assertTrue(sb.in_trading_hours(d(17, 59)))
-            self.assertFalse(sb.in_trading_hours(d(18)))
+            self.assertFalse(sb.in_trading_hours(d(7, 59), *w))
+            self.assertTrue(sb.in_trading_hours(d(8), *w))
+            self.assertTrue(sb.in_trading_hours(d(15, 59), *w))
+            self.assertFalse(sb.in_trading_hours(d(16), *w))
+
+    def test_reversion_window_13_to_18(self):
+        d = lambda h, m=0: datetime(2026, 7, 14, h, m, tzinfo=UTC)
+        w = (sb.REVERSION_HOUR_START, sb.REVERSION_HOUR_END)
+        with mock.patch.object(sb, "FORCE_TRADING_HOURS", False):
+            self.assertFalse(sb.in_trading_hours(d(12, 59), *w))
+            self.assertTrue(sb.in_trading_hours(d(13), *w))
+            self.assertTrue(sb.in_trading_hours(d(17, 59), *w))
+            self.assertFalse(sb.in_trading_hours(d(18), *w))
 
     def test_trading_hours_bypass_flag(self):
         # bypass temporaire de test en direct : tout horaire accepte
         with mock.patch.object(sb, "FORCE_TRADING_HOURS", True):
             self.assertTrue(sb.in_trading_hours(
-                datetime(2026, 7, 14, 3, tzinfo=UTC)))
+                datetime(2026, 7, 14, 3, tzinfo=UTC),
+                sb.BREAKOUT_HOUR_START, sb.BREAKOUT_HOUR_END))
+
+    def test_server_offset_detected_from_fresh_tick(self):
+        now = datetime(2026, 7, 14, 12, tzinfo=UTC)
+        with mock.patch.dict(sb._SERVER_OFFSET,
+                             {"hours": 0.0, "at": None}):
+            fake_mt5.symbol_info_tick.return_value = SimpleNamespace(
+                time=now.timestamp() + 3 * 3600)   # serveur UTC+3
+            self.assertEqual(sb.server_offset_hours("XAUUSD.p", now), 3.0)
+
+    def test_server_offset_ignores_stale_tick(self):
+        now = datetime(2026, 7, 14, 12, tzinfo=UTC)
+        with mock.patch.dict(sb._SERVER_OFFSET,
+                             {"hours": 2.0, "at": None}):
+            fake_mt5.symbol_info_tick.return_value = SimpleNamespace(
+                time=now.timestamp() - 40 * 3600)  # week-end : tick perime
+            self.assertEqual(sb.server_offset_hours("XAUUSD.p", now), 2.0)
+
+    def test_get_rates_converts_server_time_to_utc(self):
+        now = datetime(2026, 7, 14, 12, tzinfo=UTC)
+        srv = now.timestamp() + 3 * 3600           # bougie estampillee UTC+3
+        fake_mt5.copy_rates_from_pos.return_value = [
+            {"time": srv, "open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0}]
+        with mock.patch.dict(sb._SERVER_OFFSET,
+                             {"hours": 3.0,       # offset serveur deja mesure
+                              "at": datetime.now(timezone.utc)}):
+            df = sb.get_rates("XAUUSD.p", 1, 1)
+        self.assertEqual(df["time"].iloc[0].to_pydatetime(), now)
 
     def test_asian_range_filters_window(self):
         times = pd.to_datetime([
@@ -361,13 +399,27 @@ class TestRunCycle(unittest.TestCase):
         fake_mt5.copy_rates_from_pos.assert_not_called()  # plus de signaux
 
     def test_no_new_positions_outside_trading_hours(self):
+        # 19:00 UTC : hors fenetre breakout (8-16) ET reversion (13-18)
         fake_mt5.account_info.return_value = SimpleNamespace(
             balance=10000.0, equity=10000.0)
         with mock.patch.object(sb, "FORCE_TRADING_HOURS", False):
             sb.run_cycle(ACTIVE, self.guard, self.macro, {},
-                         now=datetime(2026, 7, 14, 12, 0, tzinfo=UTC))
+                         now=datetime(2026, 7, 14, 19, 0, tzinfo=UTC))
         fake_mt5.copy_rates_from_pos.assert_not_called()
         fake_mt5.order_send.assert_not_called()
+
+    def test_windows_differ_per_strategy(self):
+        # 10:00 UTC : breakout actif (M30 scanne), reversion fermee (pas de M5)
+        fake_mt5.account_info.return_value = SimpleNamespace(
+            balance=10000.0, equity=10000.0)
+        fake_mt5.copy_rates_from_pos.return_value = [
+            {"time": 1752400000 + i * 1800, "open": 2000.0, "high": 2001.0,
+             "low": 1999.0, "close": 2000.0} for i in range(30)]
+        with mock.patch.object(sb, "FORCE_TRADING_HOURS", False):
+            sb.run_cycle(ACTIVE, self.guard, self.macro, {},
+                         now=datetime(2026, 7, 14, 10, 0, tzinfo=UTC))
+        tfs = {c[0][1] for c in fake_mt5.copy_rates_from_pos.call_args_list}
+        self.assertEqual(tfs, {fake_mt5.TIMEFRAME_M30})
 
     def test_high_vix_blocks_sell_only_on_gold(self):
         # VIX 30 + signal SELL partout : XAUUSD bloque, EURUSD/GBPUSD passent

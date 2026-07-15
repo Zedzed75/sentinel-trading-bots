@@ -43,6 +43,14 @@ ATR_STOP_MULT = 2.0           # stop initial = 2 x ATR(14) H4
 RISK_PCT = 0.01               # 1% de l'equite par trade
 MAX_HISTO_DD = 0.15           # verrou permanent a -15% du pic d'equite
 
+# Pas de fenetre de session : le momentum H4 est insensible a l'heure et
+# un filtre horaire serait du sur-ajustement. En revanche, aucune OUVERTURE
+# pendant le rollover quotidien (spreads elargis, swaps) : une cassure
+# detectee dans cette plage est reevaluee des la sortie du blackout.
+# Les sorties (canal oppose, stops) restent permises 24h/24.
+ROLLOVER_HOUR_START = 21      # blackout d'ouverture 21:00-23:00 UTC
+ROLLOVER_HOUR_END = 23
+
 DEVIATION = 20
 _DIR = os.path.dirname(os.path.abspath(__file__))
 STATE_FILE = os.path.join(_DIR, "trend_state.json")
@@ -259,8 +267,15 @@ def positions_for(symbol: str, magic: int) -> list:
 # ----------------------------------------------------------------------------
 # Boucle principale
 # ----------------------------------------------------------------------------
-def scan_symbol(name: str, cfg: dict, timeframe: int, last_bars: dict):
+def entry_allowed(now: datetime) -> bool:
+    """False pendant le blackout de rollover (ouvertures uniquement)."""
+    return not (ROLLOVER_HOUR_START <= now.hour < ROLLOVER_HOUR_END)
+
+
+def scan_symbol(name: str, cfg: dict, timeframe: int, last_bars: dict,
+                now: datetime | None = None):
     """Sur nouvelle bougie cloturee : gere la sortie ou cherche une entree."""
+    now = now or datetime.now(timezone.utc)
     symbol, magic = cfg["symbol"], cfg["magic"]
     df = get_rates(symbol, timeframe, ENTRY_CHANNEL + 3)
     if df is None or len(df) < ENTRY_CHANNEL + 2:
@@ -281,6 +296,11 @@ def scan_symbol(name: str, cfg: dict, timeframe: int, last_bars: dict):
         return
     sig = entry_signal(closed)
     if sig:
+        if not entry_allowed(now):
+            last_bars.pop(name, None)   # reevaluer la bougie apres le blackout
+            log.info("[TREND] cassure %s differee (rollover %02d-%02dh UTC)",
+                     name, ROLLOVER_HOUR_START, ROLLOVER_HOUR_END)
+            return
         log.info("[TREND] cassure Donchian %s %s", ENTRY_CHANNEL, name)
         open_trend_trade(symbol, sig, magic, closed)
 
@@ -294,6 +314,7 @@ def close_all_trend():
 
 def run_cycle(active: dict, guard: PeakGuard, timeframe: int,
               last_bars: dict, now: datetime | None = None):
+    now = now or datetime.now(timezone.utc)
     acc = mt5.account_info()
     if acc is None:
         raise ConnectionError(f"account_info() KO : {mt5.last_error()}")
@@ -301,7 +322,7 @@ def run_cycle(active: dict, guard: PeakGuard, timeframe: int,
         close_all_trend()
         return
     for name, cfg in active.items():
-        scan_symbol(name, cfg, timeframe, last_bars)
+        scan_symbol(name, cfg, timeframe, last_bars, now)
 
 
 def main():

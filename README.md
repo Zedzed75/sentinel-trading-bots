@@ -38,8 +38,12 @@ Prerequis : terminal MT5 Pepperstone installe (chemin dans `main()`),
 Les fichiers `*_state.json` (references de balance, historique Kelly,
 verrous) sont crees au premier cycle et ne se versionnent pas.
 
-`FORCE_TRADING_HOURS` (sentinel_bot.py) : `True` = bypass des horaires
-13:00-18:00 UTC pour les tests en direct ; laisser a `False` en production.
+Fenetres horaires (UTC reel, bougies serveur converties automatiquement) :
+breakout 08:00-16:00 et reversion 13:00-18:00 (bot 1), nouvelles entrees
+07:00-20:00 (bot 2), pas d'ouverture 21:00-23:00 (bot 3, rollover). Les
+sorties et coupe-circuits ne sont jamais bloques par une fenetre.
+`FORCE_TRADING_HOURS` (sentinel_bot.py) : `True` = bypass des fenetres du
+bot 1 pour les tests en direct ; laisser a `False` en production.
 
 ## Tests
 

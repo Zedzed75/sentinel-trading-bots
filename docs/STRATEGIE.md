@@ -20,16 +20,21 @@ hors broker CFD) : les bots cherchent l'alpha, le coeur assure le beta.
 
 ### Bot 1 - Intraday multi-actifs (retour a la moyenne + breakout)
 
-Deux effets intrajournaliers exploites sur XAUUSD/EURUSD/GBPUSD pendant le
-recouvrement Londres/New-York (13h-18h UTC, la liquidite maximale) :
+Deux effets intrajournaliers exploites sur XAUUSD/EURUSD/GBPUSD, chacun
+dans sa propre fenetre horaire (UTC) :
 
-- **Breakout de la plage asiatique** (M30) : la session asiatique comprime
-  la volatilite ; la cassure de sa plage a l'ouverture occidentale a une
-  esperance directionnelle documentee (litterature sur les "opening range
-  breakouts").
-- **Mean reversion Bollinger/RSI** (M5) : en phase de range confirmee
-  (ecart-type ET moyenne mobile plats), les excursions a 2 ecarts-types
-  avec RSI extreme tendent a revenir dans la bande.
+- **Breakout de la plage asiatique** (M30, entrees 08h-16h) : la session
+  asiatique comprime la volatilite ; la cassure de sa plage a l'ouverture
+  occidentale a une esperance directionnelle documentee (litterature sur
+  les "opening range breakouts"). La fenetre s'ouvre des la fin de la
+  plage (08h, cassures fraiches a Londres) et se ferme avec le
+  recouvrement Londres/NY (16h) : au-dela, la cassure est tardive et la
+  liquidite decroit.
+- **Mean reversion Bollinger/RSI** (M5, entrees 13h-18h) : en phase de
+  range confirmee (ecart-type ET moyenne mobile plats), les excursions a
+  2 ecarts-types avec RSI extreme tendent a revenir dans la bande ; le
+  recouvrement puis l'apres-midi new-yorkais offrent la liquidite sans
+  l'elan directionnel des ouvertures.
 - **Filtre macro VIX asymetrique** : VIX > 25 = stress de marche. L'or
   monte en crise (valeur refuge) : ses ventes sont bloquees. Les paires
   forex, elles, s'effondrent face au dollar en crise : leurs shorts
@@ -49,7 +54,10 @@ du petrole.
 
 Trois sorties : convergence (gain), stop temporel de 48 bougies M15 (un
 spread qui ne revient pas n'a plus de raison d'etre tenu), stop a 4 sigma
-(la relation se casse). Le verrou a -15% du pic protege contre le risque
+(la relation se casse). Les nouvelles entrees sont limitees a 07h-20h UTC :
+la nuit et pendant le rollover quotidien, les spreads des deux CFD
+s'elargissent et un z-score "extreme" peut n'etre qu'un artefact de
+cotation. Les sorties, elles, restent permises 24h/24. Le verrou a -15% du pic protege contre le risque
 majeur de la strategie : un **bris de cointegration** durable (changement
 de regime, ex. revolution logistique du petrole americain).
 
@@ -67,6 +75,12 @@ Pedersen (JFE 2012) sur 58 actifs, Hurst, Ooi & Pedersen (AQR 2017) sur
 **137 ans** de donnees. Implementation type Turtle System 2 : cassure du
 canal Donchian 55 bougies H4, stop initial 2xATR, sortie sur le canal 20
 oppose - on coupe vite les faux departs, on laisse courir les tendances.
+
+Pas de fenetre de session : le momentum H4 est insensible a l'heure et un
+filtre horaire serait du sur-ajustement (principe n. 4, section 5). Seule
+exception operationnelle : aucune ouverture entre 21h et 23h UTC
+(rollover, spreads elargis) - une cassure detectee dans cette plage est
+reprise des la sortie du blackout, les sorties restent libres.
 
 Profil : asymetrie **positive** (beaucoup de petites pertes, gains rares
 et larges), exactement le miroir des bots 1-2. Surtout, le trend-following

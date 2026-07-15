@@ -136,11 +136,13 @@ class TestExecution(unittest.TestCase):
         return [{"time": 1750000000 + i * 14400, "open": c, "high": c + 1,
                  "low": c - 1, "close": c} for i, c in enumerate(closes)]
 
+    NOON = datetime(2026, 7, 14, 14, tzinfo=UTC)   # hors blackout rollover
+
     def test_breakout_opens_trade_with_sl_no_tp(self):
         # 56 bougies plates puis cassure haussiere + bougie en cours
         closes = [100.0] * (st.ENTRY_CHANNEL + 1) + [103.0, 103.0]
         fake_mt5.copy_rates_from_pos.return_value = self._rates(closes)
-        st.run_cycle(self.active, self.guard, 16388, {})
+        st.run_cycle(self.active, self.guard, 16388, {}, now=self.NOON)
         req = fake_mt5.order_send.call_args[0][0]
         self.assertEqual(req["type"], fake_mt5.ORDER_TYPE_BUY)
         self.assertEqual(req["magic"], 5001)
@@ -152,8 +154,9 @@ class TestExecution(unittest.TestCase):
         closes = [100.0] * (st.ENTRY_CHANNEL + 1) + [103.0, 103.0]
         fake_mt5.copy_rates_from_pos.return_value = self._rates(closes)
         last_bars = {}
-        st.run_cycle(self.active, self.guard, 16388, last_bars)
-        st.run_cycle(self.active, self.guard, 16388, last_bars)  # meme bougie
+        st.run_cycle(self.active, self.guard, 16388, last_bars, now=self.NOON)
+        st.run_cycle(self.active, self.guard, 16388, last_bars,
+                     now=self.NOON)   # meme bougie
         self.assertEqual(fake_mt5.order_send.call_count, 1)
         # position ouverte + nouvelle bougie -> pas de nouvelle entree
         pos = SimpleNamespace(ticket=1, symbol="XAUUSD.p", magic=5001,
@@ -161,8 +164,31 @@ class TestExecution(unittest.TestCase):
         fake_mt5.positions_get.return_value = [pos]
         fake_mt5.copy_rates_from_pos.return_value = self._rates(
             closes + [103.5])
-        st.run_cycle(self.active, self.guard, 16388, last_bars)
+        st.run_cycle(self.active, self.guard, 16388, last_bars, now=self.NOON)
         self.assertEqual(fake_mt5.order_send.call_count, 1)
+
+    def test_rollover_blackout_defers_entry(self):
+        closes = [100.0] * (st.ENTRY_CHANNEL + 1) + [103.0, 103.0]
+        fake_mt5.copy_rates_from_pos.return_value = self._rates(closes)
+        last_bars = {}
+        blackout = datetime(2026, 7, 14, 21, 30, tzinfo=UTC)
+        st.run_cycle(self.active, self.guard, 16388, last_bars, now=blackout)
+        fake_mt5.order_send.assert_not_called()
+        self.assertNotIn("XAUUSD", last_bars)   # bougie non consommee
+        # sortie du blackout : la meme cassure est reprise
+        after = datetime(2026, 7, 14, 23, 5, tzinfo=UTC)
+        st.run_cycle(self.active, self.guard, 16388, last_bars, now=after)
+        self.assertEqual(fake_mt5.order_send.call_count, 1)
+
+    def test_exit_allowed_during_blackout(self):
+        pos = SimpleNamespace(ticket=7, symbol="XAUUSD.p", magic=5001,
+                              type=0, volume=1.0, profit=42.0)
+        fake_mt5.positions_get.return_value = [pos]
+        closes = [100.0] * (st.ENTRY_CHANNEL + 1) + [97.0, 97.0]
+        fake_mt5.copy_rates_from_pos.return_value = self._rates(closes)
+        blackout = datetime(2026, 7, 14, 22, 0, tzinfo=UTC)
+        st.run_cycle(self.active, self.guard, 16388, {}, now=blackout)
+        self.assertEqual(fake_mt5.order_send.call_args[0][0]["position"], 7)
 
     def test_exit_channel_closes_position(self):
         pos = SimpleNamespace(ticket=7, symbol="XAUUSD.p", magic=5001,
@@ -170,7 +196,7 @@ class TestExecution(unittest.TestCase):
         fake_mt5.positions_get.return_value = [pos]
         closes = [100.0] * (st.ENTRY_CHANNEL + 1) + [97.0, 97.0]  # sous canal
         fake_mt5.copy_rates_from_pos.return_value = self._rates(closes)
-        st.run_cycle(self.active, self.guard, 16388, {})
+        st.run_cycle(self.active, self.guard, 16388, {}, now=self.NOON)
         req = fake_mt5.order_send.call_args[0][0]
         self.assertEqual(req["position"], 7)
         self.assertEqual(req["type"], fake_mt5.ORDER_TYPE_SELL)
