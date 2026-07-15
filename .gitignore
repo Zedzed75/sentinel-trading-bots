@@ -5,6 +5,10 @@ trend_state.json
 orchestrator_state.json
 risk_scale.json
 
+# Secrets Telegram (token) et etat du notifier (chat_id)
+telegram_config.json
+telegram_state.json
+
 # Logs runtime
 logs/
 

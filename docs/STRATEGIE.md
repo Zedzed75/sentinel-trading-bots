@@ -162,6 +162,8 @@ Deux principes transverses :
 
 - Validation demo multi-semaines, puis revue des statistiques realisees
   (win rate, R realise, drawdowns par bot) avant toute decision de reel.
-- Notifications Telegram (ouvertures/clotures, verrous, rapport quotidien).
+- Notifications Telegram (ouvertures/clotures, verrous, rapport
+  quotidien) : **fait** (bot 6, `sentinel_telegram.py`, + alertes de
+  relance du watchdog).
 - Backtests historiques longs par strategie pour calibrer les attentes.
 - Evitement d'evenements macro (NFP, FOMC, CPI) pour le bot 1.
