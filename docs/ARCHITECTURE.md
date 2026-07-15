@@ -170,7 +170,10 @@ et preuve du compounding (lots proportionnels a l'equite).
 
 La CI GitHub Actions (`.github/workflows/tests.yml`, runner
 `windows-latest` car le package MetaTrader5 est Windows-only) execute
-toutes les suites a chaque push.
+`ruff check`, la garde de limite de lignes (avertissement au-dela de
+600 lignes par fichier - relaye sur Telegram si les secrets
+`TELEGRAM_TOKEN`/`TELEGRAM_CHAT_ID` sont configures -, echec au-dela
+de 700) puis toutes les suites a chaque push.
 
 ## 5. Operations
 

@@ -14,6 +14,44 @@ jobs:
         with:
           python-version: "3.13"
       - name: Installer les dependances
-        run: pip install -r requirements.txt
+        run: pip install -r requirements.txt ruff
+      - name: Lint (ruff)
+        run: ruff check .
+      - name: Garde limite de lignes (avertit > 600, echoue > 700)
+        shell: python
+        run: |
+          import os, pathlib, sys
+          alertes, echec = [], False
+          for p in sorted(pathlib.Path(".").rglob("*.py")):
+              n = sum(1 for _ in p.open(encoding="utf-8", errors="ignore"))
+              if n > 700:
+                  print(f"::error file={p}::{p} fait {n} lignes (> 700) : refactorisation requise")
+                  echec = True
+              elif n > 600:
+                  print(f"::warning file={p}::{p} fait {n} lignes (> 600) : prevoir une reduction")
+                  alertes.append(f"{p} : {n} lignes")
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as fh:
+              fh.write("FICHIERS_LONGS=" + " | ".join(alertes) + "\n")
+          sys.exit(1 if echec else 0)
+      - name: Alerte Telegram fichiers longs (si secrets configures)
+        # Regle projet : 600-700 lignes -> notification Telegram avec signe
+        # d'avertissement. Silencieux si les secrets ne sont pas definis.
+        if: env.FICHIERS_LONGS != '' && github.ref == 'refs/heads/master'
+        env:
+          TG_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TG_CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
+        shell: python
+        run: |
+          import os, urllib.parse, urllib.request
+          token, chat = os.environ.get("TG_TOKEN"), os.environ.get("TG_CHAT")
+          if not token or not chat:
+              print("Secrets Telegram absents : annotation CI uniquement.")
+              raise SystemExit(0)
+          texte = ("⚠️ Fichiers au-dela de 600 lignes : "
+                   + os.environ["FICHIERS_LONGS"])
+          donnees = urllib.parse.urlencode(
+              {"chat_id": chat, "text": texte}).encode()
+          urllib.request.urlopen(
+              f"https://api.telegram.org/bot{token}/sendMessage", donnees)
       - name: Suites de tests (MT5 et yfinance mockes)
         run: python -m unittest discover -s tests -v

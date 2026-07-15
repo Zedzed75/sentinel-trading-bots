@@ -278,7 +278,8 @@ class TestExecution(unittest.TestCase):
         self.assertEqual(self.state.trades, [-15.0])
 
     def test_entries_allowed_window(self):
-        d = lambda h: datetime(2026, 7, 14, h, tzinfo=UTC)
+        def d(h):
+            return datetime(2026, 7, 14, h, tzinfo=UTC)
         self.assertFalse(sa.entries_allowed(d(6)))
         self.assertTrue(sa.entries_allowed(d(7)))
         self.assertTrue(sa.entries_allowed(d(19)))

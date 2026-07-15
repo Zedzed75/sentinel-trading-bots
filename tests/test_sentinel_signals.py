@@ -62,7 +62,8 @@ class TestIndicators(unittest.TestCase):
 # --- Horaires & plage asiatique -----------------------------------------------
 class TestSessions(unittest.TestCase):
     def test_breakout_window_8_to_16(self):
-        d = lambda h, m=0: datetime(2026, 7, 14, h, m, tzinfo=UTC)
+        def d(h, m=0):
+            return datetime(2026, 7, 14, h, m, tzinfo=UTC)
         w = (ss.BREAKOUT_HOUR_START, ss.BREAKOUT_HOUR_END)
         with mock.patch.object(ss, "FORCE_TRADING_HOURS", False):
             self.assertFalse(ss.in_trading_hours(d(7, 59), *w))
@@ -71,7 +72,8 @@ class TestSessions(unittest.TestCase):
             self.assertFalse(ss.in_trading_hours(d(16), *w))
 
     def test_reversion_window_13_to_18(self):
-        d = lambda h, m=0: datetime(2026, 7, 14, h, m, tzinfo=UTC)
+        def d(h, m=0):
+            return datetime(2026, 7, 14, h, m, tzinfo=UTC)
         w = (ss.REVERSION_HOUR_START, ss.REVERSION_HOUR_END)
         with mock.patch.object(ss, "FORCE_TRADING_HOURS", False):
             self.assertFalse(ss.in_trading_hours(d(12, 59), *w))
