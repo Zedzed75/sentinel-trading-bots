@@ -109,6 +109,7 @@ def build_trades(deals, offset_h: float = 0.0) -> list[dict]:
         entry = min(ins, key=lambda d: d.time)
         close_ts = max(d.time for d in outs) - offset_h * 3600
         open_ts = entry.time - offset_h * 3600
+        open_dt = datetime.fromtimestamp(open_ts, tz=timezone.utc)
         pnl = sum(d.profit + d.commission + d.swap for d in group)
         trades.append({
             "position_id": pos_id,
@@ -118,7 +119,8 @@ def build_trades(deals, offset_h: float = 0.0) -> list[dict]:
             "direction": ("long" if entry.type == mt5.DEAL_TYPE_BUY
                           else "short"),
             "volume": vol_in,
-            "open_time": datetime.fromtimestamp(open_ts, tz=timezone.utc),
+            "open_time": open_dt,
+            "open_hour": f"{open_dt.hour:02d}h",
             "close_time": datetime.fromtimestamp(close_ts, tz=timezone.utc),
             "duration_h": round((close_ts - open_ts) / 3600, 2),
             "pnl": round(pnl, 2),
@@ -234,19 +236,21 @@ def _sign(pnl) -> str:
     return "pos" if (pnl or 0) >= 0 else "neg"
 
 
-_STATS_HEAD = ("<tr><th>Strategie</th><th>Trades</th><th>Win rate</th>"
-               "<th>Profit factor</th><th>Expectancy</th><th>PnL net</th>"
-               "<th>Max DD</th><th>Duree moy.</th></tr>")
+def _stats_head(first_col: str) -> str:
+    return (f"<tr><th>{first_col}</th><th>Trades</th><th>Win rate</th>"
+            "<th>Profit factor</th><th>Expectancy</th><th>PnL net</th>"
+            "<th>Max DD</th><th>Duree moy.</th></tr>")
 
 
 def _stats_table(trades: list[dict], group_key: str,
-                 total_label: str = "TOUTES") -> str:
+                 total_label: str = "TOUTES",
+                 first_col: str = "Strategie") -> str:
     rows = [f"<tr class='total'><td>{total_label}</td>"
             f"{_stats_cells(compute_stats(trades))}</tr>"]
     for name, sub in sorted(split_by(trades, group_key).items()):
         rows.append(f"<tr><td>{name}</td>{_stats_cells(compute_stats(sub))}"
                     "</tr>")
-    return "<table>" + _STATS_HEAD + "\n".join(rows) + "</table>"
+    return "<table>" + _stats_head(first_col) + "\n".join(rows) + "</table>"
 
 
 def render_html(trades: list[dict], now: datetime) -> str:
@@ -256,7 +260,16 @@ def render_html(trades: list[dict], now: datetime) -> str:
         sections.append(f"<h2>{label} ({len(sub)} trades)</h2>"
                         + _stats_table(sub, "strategy"))
     sections.append("<h2>Par symbole (tout l'historique)</h2>"
-                    + _stats_table(trades, "symbol"))
+                    + _stats_table(trades, "symbol", first_col="Symbole"))
+
+    # Ventilation par heure d'ouverture UTC : instruit les fenetres d'entree
+    # avec des trades reels (AMELIORATION_CONTINUE.md, roadmap 2). Les
+    # conclusions restent soumises aux seuils d'echantillon de la section 3.
+    sections.append("<h2>Par heure d'ouverture UTC (tout l'historique)</h2>")
+    for strat, sub in sorted(split_by(trades, "strategy").items()):
+        sections.append(f"<h3>{strat}</h3>"
+                        + _stats_table(sub, "open_hour", "TOUTES HEURES",
+                                       first_col="Heure (UTC)"))
 
     last = [(f"<tr><td>{t['close_time']:%Y-%m-%d %H:%M}</td>"
              f"<td>{t['strategy']}</td><td>{t['symbol']}</td>"
@@ -280,6 +293,7 @@ def render_html(trades: list[dict], now: datetime) -> str:
  body {{ font-family: Segoe UI, sans-serif; margin: 2em;
         background: #1b1e24; color: #d8dde6; }}
  h1 {{ font-size: 1.3em; }} h2 {{ font-size: 1.1em; margin-top: 1.6em; }}
+ h3 {{ font-size: 1em; margin: 1em 0 0; color: #aab3c2; }}
  small {{ color: #8a93a3; }}
  table {{ border-collapse: collapse; margin-top: .6em; }}
  td, th {{ padding: .4em .8em; border-bottom: 1px solid #333a45;

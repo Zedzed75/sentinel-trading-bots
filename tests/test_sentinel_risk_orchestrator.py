@@ -12,7 +12,6 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest import mock
 
-import numpy as np
 
 if not isinstance(sys.modules.get("MetaTrader5"), mock.MagicMock):
     sys.modules["MetaTrader5"] = mock.MagicMock()
