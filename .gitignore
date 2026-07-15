@@ -9,6 +9,9 @@ risk_scale.json
 telegram_config.json
 telegram_state.json
 
+# Secrets du dashboard web (Basic Auth)
+dashboard_config.json
+
 # Logs runtime
 logs/
 

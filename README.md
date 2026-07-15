@@ -8,11 +8,12 @@ independants, concus en TDD. Compte demo recommande.
 ```
 bots/     les 6 bots (sans imports croises) + sentinel_signals.py
           (fonctions pures du bot 1)
-tests/    les 8 suites de tests (164 tests, MT5 mocke)
+tests/    les 9 suites de tests (176 tests, MT5 mocke)
 docs/     ARCHITECTURE.md (le code), STRATEGIE.md (l'investissement),
           AMELIORATION_CONTINUE.md (mesure et correction des strategies)
 research/ backtest_sentinel.py (rejoue les regles des bots sur
           l'historique broker, grilles anti sur-ajustement)
+sentinel_dashboard.py + templates/  dashboard web mobile (lecture seule)
 ```
 
 ## Bots
@@ -37,6 +38,22 @@ python bots/sentinel_trend.py               # bot 3 (trend-following H4)
 python bots/sentinel_trade_analytics.py     # bot 5 (analyse des trades)
 python bots/sentinel_telegram.py            # bot 6 (notifications mobile)
 ```
+
+### Dashboard mobile (sentinel_dashboard.py)
+
+Page web responsive (FastAPI + DaisyUI, rafraichie toutes les 10 s,
+lecture seule) : balance/equite/marge (alerte sous 150% de niveau de
+marge), statut et PnL du jour de chaque bot, jauge du coupe-circuit
+journalier -4%, verrou global, positions ouvertes, CPU/RAM/watchdog.
+
+1. Copier `dashboard_config.example.json` vers `dashboard_config.json`
+   (gitignore) et definir un mot de passe fort : le serveur refuse de
+   demarrer sans, et tout acces exige ce Basic Auth.
+2. `python sentinel_dashboard.py [port]` (defaut 8787), puis ouvrir
+   `http://<ip>:<port>/` sur le telephone.
+3. Hors reseau local, servir en HTTPS (`uvicorn sentinel_dashboard:app
+   --ssl-keyfile ... --ssl-certfile ...`) ou passer par un tunnel/VPN ;
+   ne jamais exposer le Basic Auth en HTTP sur Internet.
 
 ### Telegram (bot 6)
 
@@ -70,7 +87,7 @@ bot 1 pour les tests en direct ; laisser a `False` en production.
 
 ## Tests
 
-164 tests, MT5 et yfinance mockes (executables sans terminal) :
+176 tests, MT5, yfinance et psutil mockes (executables sans terminal) :
 
 ```
 python -m unittest discover -s tests -v
