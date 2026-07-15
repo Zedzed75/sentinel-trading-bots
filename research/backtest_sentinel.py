@@ -7,7 +7,10 @@ resultats sont independants du sizing et comparables entre strategies.
 Strategies couvertes :
 - trend    : Donchian ENTRY/EXIT + stop 2xATR (sentinel_trend, H4) ;
 - breakout : cassure de plage asiatique, SL 1.5xATR, TP 2R, partiel 50%
-             + break-even a 1R, fenetre horaire (sentinel_bot, M30).
+             + break-even a 1R, fenetre horaire (sentinel_bot, M30) ;
+- statarb  : cointegration Brent/WTI, beta OLS et z-score glissants,
+             entree |z|>=2 si ADF p<0.05, sorties convergence/z-stop/
+             stop temporel, fenetre 07-20h (sentinel_alpha_compound, M15).
 (La reversion M5 exige un historique M5 long que le broker ne fournit
 pas ; le filtre VIX n'est pas rejoue - resultats legerement optimistes
 sur les shorts or.)
@@ -16,6 +19,8 @@ Usage (terminal MT5 ouvert) :
   python research/backtest_sentinel.py trend XAUUSD --days 730
   python research/backtest_sentinel.py breakout XAUUSD --days 365
   python research/backtest_sentinel.py trend XAUUSD --grid
+  python research/backtest_sentinel.py statarb            # XBRUSD-XTIUSD
+  python research/backtest_sentinel.py statarb XBRUSD-XTIUSD --grid
 
 --grid compare des variantes de parametres avec un garde-fou anti
 sur-ajustement : les stats sont aussi calculees sur chaque moitie de
@@ -29,8 +34,15 @@ from datetime import datetime, timedelta, timezone
 
 import numpy as np
 import pandas as pd
+from statsmodels.tsa.stattools import adfuller
 
-TF_MAP = {"trend": ("H4", 6), "breakout": ("M30", 48)}   # bougies par jour
+# bougies par jour
+TF_MAP = {"trend": ("H4", 6), "breakout": ("M30", 48), "statarb": ("M15", 96)}
+
+# jambes par defaut et replis broker (memes que sentinel_alpha_compound)
+STATARB_LEGS = ("XBRUSD", "XTIUSD")
+STATARB_FALLBACKS = {"XBRUSD": ("SpotBrent", "UKOIL"),
+                     "XTIUSD": ("SpotCrude", "USOIL")}
 
 
 # ----------------------------------------------------------------------------
@@ -159,6 +171,71 @@ def backtest_breakout(df: pd.DataFrame, sl_mult: float = 1.5,
 
 
 # ----------------------------------------------------------------------------
+# Moteur stat-arb : paire alignee, ADF glissant (regles de
+# sentinel_alpha_compound). df : colonnes time, close_a, close_b.
+# ----------------------------------------------------------------------------
+def backtest_statarb(df: pd.DataFrame, entry_z: float = 2.0,
+                     exit_z: float = 0.5, stop_z: float = 4.0,
+                     max_bars: int = 48, lookback: int = 240,
+                     zscore_window: int = 96, adf_pvalue_max: float = 0.05,
+                     hour_start: int = 7, hour_end: int = 20) -> list[dict]:
+    """1R = distance d'entree a stop du spread : (stop_z - entry_z) * sigma
+    d'entree. Beta (OLS) et z-score recalcules a chaque bougie sur fenetres
+    glissantes, comme le bot ; l'ADF n'est evalue qu'aux candidats d'entree
+    (cout CPU). Le PnL fige le beta d'entree (les lots ne bougent pas en
+    position). Non rejoue : SL durs par jambe, purge de jambe orpheline,
+    stop temporel a l'heure horloge (ici en bougies alignees).
+    """
+    a, b = df["close_a"].astype(float), df["close_b"].astype(float)
+    # beta = cov/var (pente OLS) ; ecart-type du spread par moments composes :
+    # var(a - beta*b) = var_a + beta^2*var_b - 2*beta*cov_ab (ddof identique)
+    beta = (b.rolling(lookback).cov(a) / b.rolling(lookback).var()).to_numpy()
+    m_a = a.rolling(zscore_window).mean().to_numpy()
+    m_b = b.rolling(zscore_window).mean().to_numpy()
+    v_a = a.rolling(zscore_window).var().to_numpy()
+    v_b = b.rolling(zscore_window).var().to_numpy()
+    c_ab = a.rolling(zscore_window).cov(b).to_numpy()
+    av, bv = a.to_numpy(), b.to_numpy()
+    times = list(df["time"])
+
+    trades, pos = [], None
+    for i in range(lookback, len(df)):
+        bta = beta[i]
+        if np.isnan(bta):
+            continue
+        var = v_a[i] + bta * bta * v_b[i] - 2 * bta * c_ab[i]
+        if not var > 0:
+            continue
+        sigma = var ** 0.5
+        z = ((av[i] - bta * bv[i]) - (m_a[i] - bta * m_b[i])) / sigma
+        if pos is not None:
+            reason = None
+            if abs(z) <= exit_z:
+                reason = "convergence"
+            elif abs(z) >= stop_z:
+                reason = "z_stop"
+            elif i - pos["i"] >= max_bars:
+                reason = "time_stop"
+            if reason:
+                pnl = pos["dir"] * ((av[i] - pos["a"])
+                                    - pos["beta"] * (bv[i] - pos["b"]))
+                trades.append({"time": times[i], "dir": pos["dir"],
+                               "r": pnl / pos["risk"], "bars": i - pos["i"],
+                               "reason": reason})
+                pos = None
+            continue                        # pas d'entree la bougie de sortie
+        if abs(z) < entry_z or not (hour_start <= times[i].hour < hour_end):
+            continue
+        win = slice(i - lookback + 1, i + 1)
+        if adfuller(av[win] - bta * bv[win], autolag="AIC")[1] >= adf_pvalue_max:
+            continue
+        d = 1 if z < 0 else -1              # BUY_SPREAD si z <= -entry_z
+        pos = {"dir": d, "a": av[i], "b": bv[i], "beta": bta,
+               "risk": (stop_z - entry_z) * sigma, "i": i}
+    return trades
+
+
+# ----------------------------------------------------------------------------
 # Statistiques (en R)
 # ----------------------------------------------------------------------------
 def stats(trades: list[dict]) -> dict:
@@ -196,19 +273,21 @@ def fmt_stats(s: dict) -> str:
 # ----------------------------------------------------------------------------
 # Donnees MT5 (heure serveur convertie en UTC reel, comme les bots)
 # ----------------------------------------------------------------------------
-def fetch(symbol: str, tf_name: str, days: int) -> pd.DataFrame | None:
+def fetch(symbol: str, tf_name: str, days: int,
+          fallbacks: tuple = ()) -> pd.DataFrame | None:
     import MetaTrader5 as mt5
     if not mt5.initialize(
             path="C:/Program Files/Pepperstone MetaTrader 5/terminal64.exe"):
         print("mt5.initialize() KO :", mt5.last_error())
         return None
-    found = next((s for s in (symbol, symbol + ".p")
+    found = next((s for s in (symbol, symbol + ".p", *fallbacks)
                   if mt5.symbol_select(s, True)), None)
     if not found:
         print("Symbole introuvable :", symbol)
         return None
-    tf = {"H4": mt5.TIMEFRAME_H4, "M30": mt5.TIMEFRAME_M30}[tf_name]
-    per_day = {"H4": 6, "M30": 48}[tf_name]
+    tf = {"H4": mt5.TIMEFRAME_H4, "M30": mt5.TIMEFRAME_M30,
+          "M15": mt5.TIMEFRAME_M15}[tf_name]
+    per_day = {"H4": 6, "M30": 48, "M15": 96}[tf_name]
     rates = mt5.copy_rates_from_pos(found, tf, 0,
                                     min(days * per_day + 100, 99000))
     tick = mt5.symbol_info_tick(found)
@@ -236,20 +315,47 @@ GRIDS = {
     "breakout": [{"hour_start": hs, "hour_end": he, "sl_mult": sl}
                  for hs in (8, 10, 13) for he in (16, 18)
                  for sl in (1.0, 1.5, 2.0) if hs < he],
+    "statarb": [{"entry_z": z, "max_bars": mb}
+                for z in (1.5, 2.0, 2.5) for mb in (32, 48, 64)],
 }
-ENGINES = {"trend": backtest_trend, "breakout": backtest_breakout}
+ENGINES = {"trend": backtest_trend, "breakout": backtest_breakout,
+           "statarb": backtest_statarb}
+
+
+def fetch_pair(spec: str | None, tf_name: str, days: int) -> pd.DataFrame | None:
+    """Deux jambes alignees par merge sur time (colonnes close_a/close_b)."""
+    leg_a, _, leg_b = (spec or "").partition("-")
+    if not leg_b:
+        leg_a, leg_b = STATARB_LEGS
+    frames = []
+    for leg in (leg_a, leg_b):
+        df = fetch(leg, tf_name, days, STATARB_FALLBACKS.get(leg, ()))
+        if df is None:
+            return None
+        frames.append(df[["time", "close"]])
+    merged = frames[0].merge(frames[1], on="time", suffixes=("_a", "_b"))
+    print(f"paire {leg_a}/{leg_b} : {len(merged)} bougies communes")
+    return merged
 
 
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("strategy", choices=("trend", "breakout"))
-    p.add_argument("symbol")
+    p.add_argument("strategy", choices=("trend", "breakout", "statarb"))
+    p.add_argument("symbol", nargs="?",
+                   help="actif, ou paire A-B pour statarb "
+                        "(defaut : XBRUSD-XTIUSD)")
     p.add_argument("--days", type=int, default=730)
     p.add_argument("--grid", action="store_true")
     args = p.parse_args(argv)
+    if args.strategy != "statarb" and not args.symbol:
+        p.error("symbol est requis pour trend et breakout")
 
     tf_name, _ = TF_MAP[args.strategy]
-    df = fetch(args.symbol, tf_name, args.days)
+    if args.strategy == "statarb":
+        df = fetch_pair(args.symbol, tf_name, args.days)
+        args.symbol = args.symbol or "-".join(STATARB_LEGS)
+    else:
+        df = fetch(args.symbol, tf_name, args.days)
     if df is None:
         return 1
     engine = ENGINES[args.strategy]

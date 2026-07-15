@@ -118,18 +118,32 @@ sur la seule foi du backtest (bruit).
 *Appliquee le 2026-07-15* (drapeau `breakout` dans `CONFIG_PORTFOLIO` ;
 la reversion continue sur les trois actifs).
 
-### Reversion et stat-arb : non backtestees
+### Stat-arb Brent/WTI (cointegration, |z|>=2, ADF)
 
-- Reversion M5 : le broker ne fournit pas assez d'historique M5 ;
-  jugement par le journal reel uniquement (seuils section 4).
-- Stat-arb Brent/WTI : necessite un moteur bi-serie (roadmap section 6) ;
-  en attendant, le Half-Kelly reduit deja mecaniquement la voilure si les
-  stats realisees se degradent - c'est son role.
+Moteur bi-serie ajoute le 2026-07-15 (`backtest_sentinel.py statarb`,
+paire alignee par merge, beta OLS et z-score glissants, ADF aux candidats
+d'entree). Resultats sur 3 ans de M15 broker (65 206 bougies communes) :
+
+| Paire | Total | Moitie 1 | Moitie 2 | Verdict |
+|---|---|---|---|---|
+| Brent/WTI | +40.3R (n=336, PF 1.26) | +12.9R (PF 1.16) | +27.3R (PF 1.38) | **sain** - positif sur les deux moities, et TOUTE la grille (entry_z 1.5-2.5 x max_bars 32-64, 9 variantes) est positive sur les deux moities (PF total 1.16-1.38) : plateau robuste, pas un pic |
+
+Limites du rejeu : SL durs par jambe et purge de jambe orpheline non
+simules, stop temporel en bougies alignees (le bot compte en heure
+horloge). 1R = ecart entree->stop du spread ((stop_z - entry_z) x sigma).
+
+**Recommandation stat-arb** : rien a changer, laisser tourner ; le
+Half-Kelly continue d'ajuster la voilure sur les stats realisees.
+
+### Reversion M5 : non backtestee
+
+Le broker ne fournit pas assez d'historique M5 ; jugement par le journal
+reel uniquement (seuils section 4).
 
 ## 6. Roadmap recherche
 
-1. Moteur de backtest stat-arb (paire alignee, ADF glissant) dans
-   `research/`.
+1. ~~Moteur de backtest stat-arb (paire alignee, ADF glissant) dans
+   `research/`.~~ *Fait le 2026-07-15* (section 5, verdict sain).
 2. Ventilation par heure d'ouverture dans `analytics.html` pour instruire
    les fenetres avec des trades reels plutot qu'au backtest.
 3. Deflated Sharpe Ratio sur le journal reel des que n >= 100 trades.
