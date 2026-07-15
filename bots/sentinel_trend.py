@@ -152,8 +152,8 @@ class PeakGuard:
 
     def _save(self):
         try:
-            with open(self.state_file, "w", encoding="utf-8") as fh:
-                json.dump({"peak": self.peak, "locked": self.locked}, fh)
+            save_json_atomic(self.state_file,
+                             {"peak": self.peak, "locked": self.locked})
         except OSError as exc:
             log.warning("Echec sauvegarde etat : %s", exc)
 
@@ -267,6 +267,29 @@ def positions_for(symbol: str, magic: int) -> list:
 # ----------------------------------------------------------------------------
 # Boucle principale
 # ----------------------------------------------------------------------------
+def save_json_atomic(path: str, payload: dict):
+    """Temporaire + os.replace : l'etat precedent survit a un crash."""
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(payload, fh)
+    os.replace(tmp, path)
+
+
+HEARTBEAT_FILE = os.path.join(os.path.dirname(_DIR), "logs",
+                              "sentinel_trend.hb")
+
+
+def write_heartbeat(path: str = HEARTBEAT_FILE,
+                    now: datetime | None = None):
+    """Estampille de vie apres chaque cycle reussi (lue par le watchdog)."""
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write((now or datetime.now(timezone.utc)).isoformat())
+    except OSError:
+        pass
+
+
 def entry_allowed(now: datetime) -> bool:
     """False pendant le blackout de rollover (ouvertures uniquement)."""
     return not (ROLLOVER_HOUR_START <= now.hour < ROLLOVER_HOUR_END)
@@ -345,6 +368,7 @@ def main():
     while True:
         try:
             run_cycle(active, guard, timeframe, last_bars)
+            write_heartbeat()
         except ConnectionError as exc:
             log.error("Connexion perdue : %s - reconnexion...", exc)
             mt5.shutdown()

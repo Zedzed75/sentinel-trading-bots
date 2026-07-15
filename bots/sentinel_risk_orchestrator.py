@@ -45,6 +45,29 @@ RISK_SCALE_FILE = os.path.join(_DIR, "risk_scale.json")
 log = logging.getLogger("orchestrator")
 
 
+def save_json_atomic(path: str, payload: dict):
+    """Temporaire + os.replace : l'etat precedent survit a un crash."""
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(payload, fh)
+    os.replace(tmp, path)
+
+
+HEARTBEAT_FILE = os.path.join(os.path.dirname(_DIR), "logs",
+                              "sentinel_risk_orchestrator.hb")
+
+
+def write_heartbeat(path: str = HEARTBEAT_FILE,
+                    now: datetime | None = None):
+    """Estampille de vie apres chaque cycle reussi (lue par le watchdog)."""
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write((now or datetime.now(timezone.utc)).isoformat())
+    except OSError:
+        pass
+
+
 def vol_scale(realized_vol: float, target: float = TARGET_VOL) -> float:
     """Facteur de reduction cible/realisee, borne a [MIN_SCALE, 1]."""
     if realized_vol <= 0:
@@ -54,9 +77,9 @@ def vol_scale(realized_vol: float, target: float = TARGET_VOL) -> float:
 
 def write_risk_scale(scale: float, path: str | None = None):
     try:
-        with open(path or RISK_SCALE_FILE, "w", encoding="utf-8") as fh:
-            json.dump({"scale": round(scale, 4),
-                       "updated": datetime.now(timezone.utc).isoformat()}, fh)
+        save_json_atomic(path or RISK_SCALE_FILE,
+                         {"scale": round(scale, 4),
+                          "updated": datetime.now(timezone.utc).isoformat()})
     except OSError as exc:
         log.warning("Echec ecriture risk_scale : %s", exc)
 
@@ -83,9 +106,9 @@ class EquityMonitor:
 
     def _save(self):
         try:
-            with open(self.state_file, "w", encoding="utf-8") as fh:
-                json.dump({"history": self.history[-90:], "peak": self.peak,
-                           "locked": self.locked}, fh)
+            save_json_atomic(self.state_file,
+                             {"history": self.history[-90:],
+                              "peak": self.peak, "locked": self.locked})
         except OSError as exc:
             log.warning("Echec sauvegarde etat : %s", exc)
 
@@ -206,6 +229,7 @@ def main():
     while True:
         try:
             run_cycle(monitor)
+            write_heartbeat()
         except ConnectionError as exc:
             log.error("Connexion perdue : %s - reconnexion...", exc)
             mt5.shutdown()

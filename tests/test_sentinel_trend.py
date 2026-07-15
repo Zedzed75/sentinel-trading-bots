@@ -217,5 +217,30 @@ class TestExecution(unittest.TestCase):
         fake_mt5.copy_rates_from_pos.assert_not_called()
 
 
+class TestPersistence(unittest.TestCase):
+    def test_save_failure_preserves_previous_state(self):
+        fd, path = tempfile.mkstemp(suffix=".json")
+        os.close(fd)
+        os.unlink(path)
+        self.addCleanup(lambda: os.path.exists(path) and os.unlink(path))
+        g = st.PeakGuard(path)
+        g.peak = 10000.0
+        g._save()
+        g.locked = True
+        with mock.patch.object(st.os, "replace",
+                               side_effect=OSError("disque plein")):
+            g._save()
+        again = st.PeakGuard(path)
+        self.assertFalse(again.locked)
+        self.assertEqual(again.peak, 10000.0)
+
+    def test_write_heartbeat(self):
+        path = os.path.join(tempfile.mkdtemp(), "sentinel_trend.hb")
+        now = datetime(2026, 7, 15, 12, tzinfo=UTC)
+        st.write_heartbeat(path, now)
+        with open(path, encoding="utf-8") as fh:
+            self.assertEqual(fh.read(), now.isoformat())
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -66,6 +66,20 @@ log = logging.getLogger("telegram")
 # ----------------------------------------------------------------------------
 # Lecture des donnees (fonctions pures, testables)
 # ----------------------------------------------------------------------------
+HEARTBEAT_FILE = os.path.join(LOG_DIR, "sentinel_telegram.hb")
+
+
+def write_heartbeat(path: str = HEARTBEAT_FILE,
+                    now: datetime | None = None):
+    """Estampille de vie apres chaque cycle reussi (lue par le watchdog)."""
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write((now or datetime.now(timezone.utc)).isoformat())
+    except OSError:
+        pass
+
+
 def load_json(path: str) -> dict:
     try:
         with open(path, encoding="utf-8") as fh:
@@ -363,6 +377,7 @@ def main():
     while True:
         try:
             run_cycle(notif)
+            write_heartbeat()
         except ConnectionError as exc:
             log.error("Connexion perdue : %s - reconnexion...", exc)
             mt5.shutdown()

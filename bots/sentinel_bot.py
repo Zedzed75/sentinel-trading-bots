@@ -216,6 +216,31 @@ def reached_one_r(pos_type: int, price_open: float, sl: float,
     return current <= price_open - risk
 
 
+def save_json_atomic(path: str, payload: dict):
+    """Temporaire + os.replace : l'etat precedent survit a un crash."""
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(payload, fh)
+    os.replace(tmp, path)
+
+
+HEARTBEAT_FILE = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "logs", "sentinel_bot.hb")
+
+
+def write_heartbeat(path: str = HEARTBEAT_FILE,
+                    now: datetime | None = None):
+    """Estampille de vie apres chaque cycle reussi (lue par le watchdog) :
+    un processus vivant mais gele (reconnexion sans fin) sera relance."""
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write((now or datetime.now(timezone.utc)).isoformat())
+    except OSError:
+        pass
+
+
 def read_risk_scale(path: str | None = None) -> float:
     """Facteur [0,1] ecrit par l'orchestrateur de risque ; 1.0 par defaut."""
     try:
@@ -289,9 +314,10 @@ class DayGuard:
 
     def _save(self):
         try:
-            with open(self.state_file, "w", encoding="utf-8") as fh:
-                json.dump({"day": self.day, "day_balance": self.day_balance,
-                           "locked": self.locked}, fh)
+            save_json_atomic(self.state_file,
+                             {"day": self.day,
+                              "day_balance": self.day_balance,
+                              "locked": self.locked})
         except OSError as exc:
             log.warning("Echec sauvegarde etat : %s", exc)
 
@@ -595,6 +621,7 @@ def main():
     while True:
         try:
             run_cycle(active, guard, macro, last_bars)
+            write_heartbeat()
         except ConnectionError as exc:
             log.error("Connexion perdue : %s - reconnexion...", exc)
             mt5.shutdown()

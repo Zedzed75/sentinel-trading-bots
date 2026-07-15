@@ -517,5 +517,39 @@ class TestMacroFilterFetch(unittest.TestCase):
             self.assertEqual(tk.call_count, 2)      # nouveau jour -> re-fetch
 
 
+# --- Persistance atomique & heartbeat ------------------------------------------
+class TestPersistence(unittest.TestCase):
+    def setUp(self):
+        fd, self.path = tempfile.mkstemp(suffix=".json")
+        os.close(fd)
+        os.unlink(self.path)
+        self.addCleanup(lambda: os.path.exists(self.path)
+                        and os.unlink(self.path))
+
+    def test_save_atomic_reload_and_no_tmp(self):
+        g = sb.DayGuard(self.path)
+        g.day, g.day_balance = "2026-07-15", 10000.0
+        g._save()
+        self.assertEqual(sb.DayGuard(self.path).day, "2026-07-15")
+        self.assertFalse(os.path.exists(self.path + ".tmp"))
+
+    def test_save_failure_preserves_previous_state(self):
+        g = sb.DayGuard(self.path)
+        g.day, g.locked = "2026-07-15", False
+        g._save()
+        g.locked = True
+        with mock.patch.object(sb.os, "replace",
+                               side_effect=OSError("disque plein")):
+            g._save()                      # avale l'erreur, etat intact
+        self.assertFalse(sb.DayGuard(self.path).locked)
+
+    def test_write_heartbeat(self):
+        path = os.path.join(tempfile.mkdtemp(), "sentinel_bot.hb")
+        now = datetime(2026, 7, 15, 12, tzinfo=UTC)
+        sb.write_heartbeat(path, now)
+        with open(path, encoding="utf-8") as fh:
+            self.assertEqual(fh.read(), now.isoformat())
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

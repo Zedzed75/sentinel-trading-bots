@@ -27,11 +27,16 @@ foreach ($bot in $Bots) {
         $age = [int]((Get-Date) - (Get-Item $logFile).LastWriteTime).TotalMinutes
         $lastLog = "log ecrit il y a $age min"
     }
+    $hbFile = Join-Path $LogDir ($bot -replace "\.py$", ".hb")
+    $hb = "hb ?"
+    if (Test-Path $hbFile) {
+        $hb = "hb {0}s" -f [int]((Get-Date) - (Get-Item $hbFile).LastWriteTime).TotalSeconds
+    }
 
     if ($proc) {
         $up = (Get-Date) - $proc.CreationDate
         $upTxt = "{0:d\j\ h\h\ mm\m}" -f $up
-        Write-Host ("[OK]     {0,-35} pid {1,-6} up {2,-12} {3}" -f $bot, $proc.ProcessId, $upTxt, $lastLog) -ForegroundColor Green
+        Write-Host ("[OK]     {0,-35} pid {1,-6} up {2,-12} {3,-8} {4}" -f $bot, $proc.ProcessId, $upTxt, $hb, $lastLog) -ForegroundColor Green
     } else {
         $allOk = $false
         Write-Host ("[ABSENT] {0,-35} {1}" -f $bot, $lastLog) -ForegroundColor Red

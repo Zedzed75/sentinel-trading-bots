@@ -322,5 +322,30 @@ class TestExecution(unittest.TestCase):
         self.assertTrue(fake_mt5.order_send.called)    # jambe fermee
 
 
+class TestPersistence(unittest.TestCase):
+    def test_save_failure_preserves_previous_state(self):
+        fd, path = tempfile.mkstemp(suffix=".json")
+        os.close(fd)
+        os.unlink(path)
+        self.addCleanup(lambda: os.path.exists(path) and os.unlink(path))
+        state = sa.AlphaState(path)
+        state.trades = [100.0]
+        state.save()
+        state.locked = True
+        with mock.patch.object(sa.os, "replace",
+                               side_effect=OSError("disque plein")):
+            state.save()
+        again = sa.AlphaState(path)
+        self.assertFalse(again.locked)
+        self.assertEqual(again.trades, [100.0])
+
+    def test_write_heartbeat(self):
+        path = os.path.join(tempfile.mkdtemp(), "sentinel_alpha.hb")
+        now = datetime(2026, 7, 15, 12, tzinfo=UTC)
+        sa.write_heartbeat(path, now)
+        with open(path, encoding="utf-8") as fh:
+            self.assertEqual(fh.read(), now.isoformat())
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -148,6 +148,13 @@ class TestNotifier(unittest.TestCase):
                 if c[0][0] == "sendMessage"][0]
         self.assertIn("+146.82", sent[1]["text"])
 
+    def test_write_heartbeat(self):
+        path = os.path.join(tempfile.mkdtemp(), "telegram.hb")
+        now = datetime(2026, 7, 15, 12, tzinfo=UTC)
+        tg.write_heartbeat(path, now)
+        with open(path, encoding="utf-8") as fh:
+            self.assertEqual(fh.read(), now.isoformat())
+
     def test_send_without_chat_id_is_noop(self):
         self.n.send("bonjour")
         self.n.api.assert_not_called()

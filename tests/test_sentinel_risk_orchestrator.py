@@ -180,5 +180,28 @@ class TestRunCycle(unittest.TestCase):
         self.assertIn("CONCENTRATION", cm.output[0])
 
 
+class TestPersistence(unittest.TestCase):
+    def test_save_failure_preserves_previous_state(self):
+        path = temp_path()
+        self.addCleanup(lambda: os.path.exists(path) and os.unlink(path))
+        mon = so.EquityMonitor(path)
+        mon.peak = 10000.0
+        mon._save()
+        mon.locked = True
+        with mock.patch.object(so.os, "replace",
+                               side_effect=OSError("disque plein")):
+            mon._save()
+        again = so.EquityMonitor(path)
+        self.assertFalse(again.locked)
+        self.assertEqual(again.peak, 10000.0)
+
+    def test_write_heartbeat(self):
+        path = os.path.join(tempfile.mkdtemp(), "orchestrator.hb")
+        now = datetime(2026, 7, 15, 12, tzinfo=UTC)
+        so.write_heartbeat(path, now)
+        with open(path, encoding="utf-8") as fh:
+            self.assertEqual(fh.read(), now.isoformat())
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -19,6 +19,17 @@ $Bots = @(
     "sentinel_trade_analytics.py",
     "sentinel_telegram.py"
 )
+# Age max du heartbeat (logs/<bot>.hb, ecrit apres chaque cycle reussi).
+# Au-dela : processus vivant mais gele -> kill + relance. Le bot 5 a un
+# cycle de 15 min, le bot 6 attend parfois un token : seuils adaptes.
+$HbLimitSec = @{
+    "sentinel_risk_orchestrator.py" = 300
+    "sentinel_bot.py"               = 300
+    "sentinel_alpha_compound.py"    = 300
+    "sentinel_trend.py"             = 300
+    "sentinel_trade_analytics.py"   = 2700
+    "sentinel_telegram.py"          = 300
+}
 
 New-Item -ItemType Directory -Force $LogDir | Out-Null
 
@@ -98,6 +109,23 @@ while ($true) {
             $_.CommandLine -match [regex]::Escape($bot)
         } | Select-Object -First 1
         $logFile = Join-Path $LogDir ($bot -replace "\.py$", ".log")
+
+        # heartbeat : vivant mais gele (present ET plus vieux que la limite)
+        if ($running) {
+            $hb = Join-Path $LogDir ($bot -replace "\.py$", ".hb")
+            if (Test-Path $hb) {
+                $age = ((Get-Date) - (Get-Item $hb).LastWriteTime).TotalSeconds
+                if ($age -gt $HbLimitSec[$bot]) {
+                    Write-Log ("$bot gele (heartbeat {0:n0}s) -> kill" -f $age)
+                    Send-Telegram ("ALERTE : $bot gele (aucun cycle depuis " +
+                        "{0:n0} min) - redemarrage force" -f ($age / 60))
+                    Stop-Process -Id $running.ProcessId -Force `
+                        -ErrorAction SilentlyContinue
+                    Remove-Item $hb -Force -ErrorAction SilentlyContinue
+                    $running = $null
+                }
+            }
+        }
         $logInfo = "aucun log"
         if (Test-Path $logFile) {
             $min = [int]((Get-Date) - (Get-Item $logFile).LastWriteTime).TotalMinutes
