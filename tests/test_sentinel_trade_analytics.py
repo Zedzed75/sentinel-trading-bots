@@ -185,6 +185,13 @@ class TestOutputs(unittest.TestCase):
         self.assertTrue(os.path.exists(self.csv_path))
         self.assertTrue(os.path.exists(self.html_path))
 
+    def test_write_heartbeat(self):
+        path = os.path.join(self.dir, "analytics.hb")
+        now = datetime(2026, 7, 15, 12, tzinfo=UTC)
+        sa.write_heartbeat(path, now)
+        with open(path, encoding="utf-8") as fh:
+            self.assertEqual(fh.read(), now.isoformat())
+
     def test_run_cycle_raises_on_lost_connection(self):
         fake_mt5.history_deals_get.return_value = None
         with self.assertRaises(ConnectionError):

@@ -78,6 +78,30 @@ def fp(symbol: str, value: float | None) -> str:
     return "n/a" if value is None else price_fmt(symbol) % value
 
 
+def save_json_atomic(path: str, payload: dict):
+    """Temporaire + os.replace : l'etat precedent survit a un crash."""
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(payload, fh)
+    os.replace(tmp, path)
+
+
+HEARTBEAT_FILE = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "logs", "sentinel_alpha_compound.hb")
+
+
+def write_heartbeat(path: str = HEARTBEAT_FILE,
+                    now: datetime | None = None):
+    """Estampille de vie apres chaque cycle reussi (lue par le watchdog)."""
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write((now or datetime.now(timezone.utc)).isoformat())
+    except OSError:
+        pass
+
+
 def entries_allowed(now: datetime) -> bool:
     """Nouveau spread uniquement dans [ENTRY_HOUR_START, ENTRY_HOUR_END) UTC."""
     return ENTRY_HOUR_START <= now.hour < ENTRY_HOUR_END
@@ -124,10 +148,10 @@ class AlphaState:
 
     def save(self):
         try:
-            with open(self.path, "w", encoding="utf-8") as fh:
-                json.dump({"trades": self.trades,
-                           "peak_equity": self.peak_equity,
-                           "locked": self.locked, "open": self.open}, fh)
+            save_json_atomic(self.path,
+                             {"trades": self.trades,
+                              "peak_equity": self.peak_equity,
+                              "locked": self.locked, "open": self.open})
         except OSError as exc:
             log.warning("Echec sauvegarde etat : %s", exc)
 
@@ -493,6 +517,7 @@ def main():
     while True:
         try:
             run_cycle(trader, guard, timeframe)
+            write_heartbeat()
         except ConnectionError as exc:
             log.error("Connexion perdue : %s - reconnexion...", exc)
             mt5.shutdown()

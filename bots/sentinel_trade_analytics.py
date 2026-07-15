@@ -179,6 +179,20 @@ def split_by(trades: list[dict], key: str) -> dict[str, list[dict]]:
 # ----------------------------------------------------------------------------
 # Sorties : journal CSV et rapport HTML
 # ----------------------------------------------------------------------------
+HEARTBEAT_FILE = os.path.join(LOG_DIR, "sentinel_trade_analytics.hb")
+
+
+def write_heartbeat(path: str = HEARTBEAT_FILE,
+                    now: datetime | None = None):
+    """Estampille de vie apres chaque cycle reussi (lue par le watchdog)."""
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write((now or datetime.now(timezone.utc)).isoformat())
+    except OSError:
+        pass
+
+
 def _write_atomic(path: str, text: str):
     """Ecrit via un fichier temporaire + rename : jamais de fichier corrompu."""
     tmp = path + ".tmp"
@@ -313,6 +327,7 @@ def main():
     while True:
         try:
             run_cycle()
+            write_heartbeat()
         except ConnectionError as exc:
             log.error("Connexion perdue : %s - reconnexion...", exc)
             mt5.shutdown()
