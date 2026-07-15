@@ -135,4 +135,9 @@ la reversion continue sur les trois actifs).
 3. Deflated Sharpe Ratio sur le journal reel des que n >= 100 trades.
 4. Filtre d'evenements macro (NFP, FOMC, CPI) pour le bot 1, backteste
    avant deploiement.
-5. Purge automatique des couples suspendus reevalues chaque trimestre.
+5. ~~Purge automatique des couples suspendus reevalues chaque trimestre.~~
+   *Fait le 2026-07-15* : le rapport quotidien Telegram rappelle chaque
+   couple suspendu/reduit, les trades reels accumules depuis la decision
+   et l'echeance de reevaluation trimestrielle (`SUSPENSIONS` dans
+   `sentinel_telegram.py`, a tenir a jour a chaque decision). La
+   reevaluation elle-meme reste une analyse humaine.
