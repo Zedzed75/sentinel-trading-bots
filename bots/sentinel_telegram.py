@@ -62,6 +62,18 @@ SUSPENSIONS = (
 REVIEW_AFTER_DAYS = 91        # reevaluation trimestrielle
 REVIEW_MIN_TRADES = 30        # seuil du journal reel (AMELIORATION section 4)
 
+# Fenetres d'OUVERTURE par strategie (UTC reel) - copie volontaire des
+# configs des bots 1-3, comme MAGIC_STRATEGY. start > end = fenetre qui
+# enjambe minuit (trend : seul le blackout rollover 21-23h ferme les
+# ouvertures). Les sorties et coupe-circuits ne sont jamais bloques.
+ENTRY_WINDOWS = (
+    {"strategy": "breakout (bot 1)", "start": 8, "end": 16,
+     "note": "XAUUSD uniquement, EURUSD/GBPUSD suspendus"},
+    {"strategy": "reversion (bot 1)", "start": 13, "end": 18},
+    {"strategy": "statarb (bot 2)", "start": 7, "end": 20},
+    {"strategy": "trend (bot 3)", "start": 23, "end": 21},
+)
+
 _DIR = os.path.dirname(os.path.abspath(__file__))
 LOG_DIR = os.path.join(os.path.dirname(_DIR), "logs")
 TRADES_CSV = os.path.join(LOG_DIR, "trades.csv")
@@ -69,12 +81,15 @@ CONFIG_FILE = os.path.join(_DIR, "telegram_config.json")
 STATE_FILE = os.path.join(_DIR, "telegram_state.json")
 RISK_SCALE_FILE = os.path.join(_DIR, "risk_scale.json")
 
-# state file -> libelle du verrou surveille
+# state file -> libelle du verrou surveille (avec echeance de levee)
 LOCK_SOURCES = {
-    "sentinel_state.json": "bot 1 (verrou journalier -4%)",
-    "alpha_state.json": "bot 2 (verrou -15% du pic)",
-    "trend_state.json": "bot 3 (verrou -15% du pic)",
-    "orchestrator_state.json": "verrou GLOBAL -10% (toute la flotte)",
+    "sentinel_state.json": "bot 1 (verrou journalier -4%, leve a 00:00 UTC)",
+    "alpha_state.json": "bot 2 (verrou permanent -15% du pic, "
+                        "analyse humaine requise)",
+    "trend_state.json": "bot 3 (verrou permanent -15% du pic, "
+                        "analyse humaine requise)",
+    "orchestrator_state.json": "verrou GLOBAL permanent -10% "
+                               "(toute la flotte, analyse humaine requise)",
 }
 FLEET_BOTS = ("sentinel_risk_orchestrator.py", "sentinel_bot.py",
               "sentinel_alpha_compound.py", "sentinel_trend.py",
@@ -188,6 +203,21 @@ def suspension_lines(rows: list[dict], now: datetime) -> list[str]:
     return lines
 
 
+def entry_status_lines(now: datetime) -> list[str]:
+    """Pour /status : chaque strategie peut-elle OUVRIR un trade maintenant ?
+    Fenetre en cours -> heure de fermeture ; fermee -> prochaine ouverture.
+    (Les sorties et coupe-circuits ne dependent d'aucune fenetre.)"""
+    lines = []
+    for w in ENTRY_WINDOWS:
+        s, e, h = w["start"], w["end"], now.hour
+        is_open = (s <= h < e) if s < e else (h >= s or h < e)
+        state = (f"peut trader jusqu'a {e:02d}:00" if is_open
+                 else f"⏳ fenetre fermee, ouvre a {s:02d}:00")
+        note = f" [{w['note']}]" if w.get("note") else ""
+        lines.append(f"- {w['strategy']} : {state}{note}")
+    return lines
+
+
 def active_locks(dir_path: str = _DIR) -> list[str]:
     """Libelles des coupe-circuits actuellement verrouilles."""
     return [label for name, label in LOCK_SOURCES.items()
@@ -246,6 +276,8 @@ def status_text(now: datetime) -> str:
     locks = active_locks()
     lines.append("Verrous : " + ("aucun"
                  if not locks else "\U0001f512 " + " ; ".join(locks)))
+    lines.append("Fenetres d'entree (UTC) :")
+    lines += entry_status_lines(now)
     lines.append("Processus :")
     for name, alive in bots_processes().items():
         lines.append(f"- {name} : {'OK' if alive else 'ARRETE !'}")

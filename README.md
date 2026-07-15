@@ -8,7 +8,7 @@ independants, concus en TDD. Compte demo recommande.
 ```
 bots/     les 6 bots (sans imports croises) + sentinel_signals.py
           (fonctions pures du bot 1)
-tests/    les 8 suites de tests (158 tests, MT5 mocke)
+tests/    les 8 suites de tests (164 tests, MT5 mocke)
 docs/     ARCHITECTURE.md (le code), STRATEGIE.md (l'investissement),
           AMELIORATION_CONTINUE.md (mesure et correction des strategies)
 research/ backtest_sentinel.py (rejoue les regles des bots sur
@@ -24,7 +24,7 @@ research/ backtest_sentinel.py (rejoue les regles des bots sur
 | `sentinel_trend.py` | Suivi de tendance (time-series momentum) : cassure Donchian 55 H4, sortie canal 20 oppose, sur XAUUSD, EURUSD, GBPUSD, US500, XTIUSD | 1% de l'equite/trade (0.5% sur EURUSD/GBPUSD/XTIUSD depuis le 2026-07-15, cf. AMELIORATION_CONTINUE.md), SL dur 2xATR(14), pas de TP | -15% du pic d'equite historique, verrou permanent |
 | `sentinel_risk_orchestrator.py` | Ne trade pas : vol targeting 10% annualise (ecrit `risk_scale.json`, applique par tous les bots), alerte de concentration directionnelle | reduit les tailles quand la vol du compte monte (plancher 0.25) | -10% GLOBAL du pic d'equite : ferme toute la flotte (magics Sentinel uniquement), verrou permanent |
 | `sentinel_trade_analytics.py` | Ne trade pas : reconstitue les trades fermes depuis l'historique MT5 (magics Sentinel) et publie `logs/trades.csv` + `logs/analytics.html` (win rate, profit factor, expectancy, max DD par strategie/symbole sur 7j/30j/total, plus la ventilation par heure d'ouverture UTC) | aucun (lecture seule) | aucun |
-| `sentinel_telegram.py` | Ne trade pas : notifications Telegram (ouvertures, clotures avec PnL, coupe-circuits, rapport quotidien 18h UTC avec rappel des couples suspendus/reduits et de leur echeance de reevaluation) et commandes `/status` (equite, positions, verrous, processus) et `/pnl` (gains/pertes jour/7j/30j/total par strategie) | aucun (lecture seule) | aucun |
+| `sentinel_telegram.py` | Ne trade pas : notifications Telegram (ouvertures, clotures avec PnL, coupe-circuits, rapport quotidien 18h UTC avec rappel des couples suspendus/reduits et de leur echeance de reevaluation) et commandes `/status` (equite, positions, verrous avec echeance, fenetres d'entree ouvertes/fermees par strategie, processus) et `/pnl` (gains/pertes jour/7j/30j/total par strategie) | aucun (lecture seule) | aucun |
 
 ## Utilisation
 
@@ -70,7 +70,7 @@ bot 1 pour les tests en direct ; laisser a `False` en production.
 
 ## Tests
 
-158 tests, MT5 et yfinance mockes (executables sans terminal) :
+164 tests, MT5 et yfinance mockes (executables sans terminal) :
 
 ```
 python -m unittest discover -s tests -v
