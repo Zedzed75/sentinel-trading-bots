@@ -16,13 +16,30 @@ $Bots = @(
     "sentinel_bot.py",
     "sentinel_alpha_compound.py",
     "sentinel_trend.py",
-    "sentinel_trade_analytics.py"
+    "sentinel_trade_analytics.py",
+    "sentinel_telegram.py"
 )
 
 New-Item -ItemType Directory -Force $LogDir | Out-Null
 
 function Write-Log($msg) {
     "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') $msg" | Add-Content $WatchLog
+}
+
+# Alerte Telegram (token dans bots/telegram_config.json, chat_id capture
+# par sentinel_telegram.py dans telegram_state.json). Silencieux si absent.
+function Send-Telegram($text) {
+    try {
+        $cfg = Get-Content (Join-Path $BotsDir "telegram_config.json") `
+            -Raw -ErrorAction Stop | ConvertFrom-Json
+        $st = Get-Content (Join-Path $BotsDir "telegram_state.json") `
+            -Raw -ErrorAction Stop | ConvertFrom-Json
+        if ($cfg.token -and $st.chat_id) {
+            Invoke-RestMethod -Method Post `
+                -Uri "https://api.telegram.org/bot$($cfg.token)/sendMessage" `
+                -Body @{ chat_id = $st.chat_id; text = $text } | Out-Null
+        }
+    } catch { }
 }
 
 $StatusHtml = Join-Path $LogDir "status.html"
@@ -94,6 +111,7 @@ while ($true) {
             }
         } else {
             Write-Log "$bot absent -> relance"
+            Send-Telegram "ALERTE : $bot etait arrete - relance par le watchdog"
             Start-Process cmd `
                 -ArgumentList "/c python -u $bot >> `"$logFile`" 2>&1" `
                 -WorkingDirectory $BotsDir -WindowStyle Hidden
