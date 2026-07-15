@@ -15,7 +15,8 @@ $Bots = @(
     "sentinel_risk_orchestrator.py",
     "sentinel_bot.py",
     "sentinel_alpha_compound.py",
-    "sentinel_trend.py"
+    "sentinel_trend.py",
+    "sentinel_trade_analytics.py"
 )
 
 New-Item -ItemType Directory -Force $LogDir | Out-Null
