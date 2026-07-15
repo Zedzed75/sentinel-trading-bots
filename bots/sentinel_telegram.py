@@ -40,6 +40,28 @@ MAGIC_STRATEGY = {
 POLL_SECONDS = 30
 DAILY_REPORT_HOUR = 18        # rapport quotidien apres la fenetre du bot 1
 
+# Couples strategie/symbole suspendus ou a risque reduit (decisions de
+# recherche appliquees dans les configs des bots 1 et 3, voir
+# docs/AMELIORATION_CONTINUE.md section 5). Copie volontaire, comme
+# MAGIC_STRATEGY : a tenir a jour a chaque decision. Le rapport quotidien
+# rappelle les trades reels accumules depuis et la reevaluation
+# trimestrielle - la boucle de reevaluation ne repose plus sur la memoire.
+# aliases : noms broker possibles du symbole dans trades.csv.
+SUSPENSIONS = (
+    {"strategy": "breakout", "symbol": "EURUSD", "action": "suspendu",
+     "since": "2026-07-15", "aliases": ("EURUSD",)},
+    {"strategy": "breakout", "symbol": "GBPUSD", "action": "suspendu",
+     "since": "2026-07-15", "aliases": ("GBPUSD",)},
+    {"strategy": "trend", "symbol": "EURUSD", "action": "risque /2",
+     "since": "2026-07-15", "aliases": ("EURUSD",)},
+    {"strategy": "trend", "symbol": "GBPUSD", "action": "risque /2",
+     "since": "2026-07-15", "aliases": ("GBPUSD",)},
+    {"strategy": "trend", "symbol": "XTIUSD", "action": "risque /2",
+     "since": "2026-07-15", "aliases": ("XTIUSD", "SpotCrude", "USOIL")},
+)
+REVIEW_AFTER_DAYS = 91        # reevaluation trimestrielle
+REVIEW_MIN_TRADES = 30        # seuil du journal reel (AMELIORATION section 4)
+
 _DIR = os.path.dirname(os.path.abspath(__file__))
 LOG_DIR = os.path.join(os.path.dirname(_DIR), "logs")
 TRADES_CSV = os.path.join(LOG_DIR, "trades.csv")
@@ -94,6 +116,7 @@ def read_trades(path: str = TRADES_CSV) -> list[dict]:
     try:
         with open(path, encoding="utf-8", newline="") as fh:
             return [{"pnl": float(r["pnl"]), "strategy": r["strategy"],
+                     "symbol": r.get("symbol", ""),
                      "close_time": datetime.fromisoformat(r["close_time"])}
                     for r in csv.DictReader(fh)]
     except (OSError, ValueError, KeyError):
@@ -143,6 +166,26 @@ def format_pnl_message(s: dict) -> str:
             lines.append(f"- {name} : {fmt_eur(st['pnl'])} "
                          f"({st['count']} trades)")
     return "\n".join(lines)
+
+
+def suspension_lines(rows: list[dict], now: datetime) -> list[str]:
+    """Rappel des couples suspendus/reduits : trades reels accumules depuis
+    la decision et date de reevaluation trimestrielle (⚠️ si echue)."""
+    lines = []
+    for s in SUSPENSIONS:
+        since = datetime.fromisoformat(s["since"]).replace(tzinfo=timezone.utc)
+        due = since + timedelta(days=REVIEW_AFTER_DAYS)
+        aliases = tuple(a.upper() for a in s["aliases"])
+        n = sum(1 for r in rows
+                if r["strategy"] == s["strategy"]
+                and r["close_time"] >= since
+                and r.get("symbol", "").upper().startswith(aliases))
+        due_txt = (f"reevaluation ECHUE ({due:%Y-%m-%d}) ⚠️" if now >= due
+                   else f"reevaluation le {due:%Y-%m-%d}")
+        lines.append(f"- {s['strategy']} {s['symbol']} : {s['action']} "
+                     f"depuis le {s['since']}, {n} trades depuis "
+                     f"(seuil {REVIEW_MIN_TRADES}), {due_txt}")
+    return lines
 
 
 def active_locks(dir_path: str = _DIR) -> list[str]:
@@ -332,9 +375,14 @@ def maybe_daily_report(notif: TelegramNotifier, now: datetime):
     if not should_send_daily(notif.last_report_day, now):
         return
     acc = mt5.account_info()
-    msg = format_pnl_message(pnl_summary(read_trades(), now))
+    rows = read_trades()
+    msg = format_pnl_message(pnl_summary(rows, now))
     if acc is not None:
         msg += f"\n\nEquite : {acc.equity:.2f} {acc.currency}"
+    susp = suspension_lines(rows, now)
+    if susp:
+        msg += ("\n\n⏳ Couples sous surveillance :\n"
+                + "\n".join(susp))
     notif.send("\U0001f4c5 Rapport quotidien\n" + msg)
     notif.last_report_day = now.date().isoformat()
     notif._save()

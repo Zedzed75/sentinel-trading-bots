@@ -29,8 +29,8 @@ UTC = timezone.utc
 NOW = datetime(2026, 7, 15, 19, 0, tzinfo=UTC)
 
 
-def _row(pnl, days_ago=0, strategy="breakout"):
-    return {"pnl": pnl, "strategy": strategy,
+def _row(pnl, days_ago=0, strategy="breakout", symbol="XAUUSD.p"):
+    return {"pnl": pnl, "strategy": strategy, "symbol": symbol,
             "close_time": NOW - timedelta(days=days_ago)}
 
 
@@ -68,6 +68,7 @@ class TestTradesCsv(unittest.TestCase):
         rows = tg.read_trades(path)
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["pnl"], 292.19)
+        self.assertEqual(rows[0]["symbol"], "GBPUSD")
         self.assertEqual(rows[0]["close_time"].hour, 12)
 
     def test_read_trades_missing_file(self):
@@ -103,6 +104,61 @@ class TestDealsAndLocks(unittest.TestCase):
         self.assertFalse(tg.should_send_daily("2026-07-15", NOW))  # deja fait
         early = NOW.replace(hour=int(tg.DAILY_REPORT_HOUR) - 1)
         self.assertFalse(tg.should_send_daily("2026-07-14", early))
+
+
+class TestSuspensions(unittest.TestCase):
+    """Suivi des couples suspendus/reduits dans le rapport quotidien."""
+
+    def test_registry_matches_research_decisions(self):
+        # decisions du 2026-07-15 (AMELIORATION_CONTINUE.md section 5)
+        couples = {(s["strategy"], s["symbol"], s["action"])
+                   for s in tg.SUSPENSIONS}
+        self.assertIn(("breakout", "EURUSD", "suspendu"), couples)
+        self.assertIn(("breakout", "GBPUSD", "suspendu"), couples)
+        self.assertIn(("trend", "XTIUSD", "risque /2"), couples)
+        self.assertEqual(len(tg.SUSPENSIONS), 5)
+
+    def test_counts_trades_since_decision_with_aliases(self):
+        rows = [
+            _row(10.0, days_ago=0, strategy="trend", symbol="EURUSD.p"),
+            _row(-5.0, days_ago=0, strategy="trend", symbol="SpotCrude"),
+            _row(10.0, days_ago=40, strategy="trend",
+                 symbol="EURUSD.p"),                    # avant la decision
+            _row(10.0, days_ago=0, strategy="breakout",
+                 symbol="EURUSD.p"),                    # autre strategie
+        ]
+        lines = "\n".join(tg.suspension_lines(rows, NOW))
+        self.assertIn("trend EURUSD : risque /2 depuis le 2026-07-15, "
+                      "1 trades depuis", lines)
+        self.assertIn("trend XTIUSD : risque /2 depuis le 2026-07-15, "
+                      "1 trades depuis", lines)
+        self.assertIn("breakout GBPUSD : suspendu depuis le 2026-07-15, "
+                      "0 trades depuis", lines)
+
+    def test_review_date_and_overdue_flag(self):
+        lines = "\n".join(tg.suspension_lines([], NOW))
+        self.assertIn("reevaluation le 2026-10-14", lines)   # +91 jours
+        self.assertNotIn("ECHUE", lines)
+        later = NOW + timedelta(days=120)
+        self.assertIn("ECHUE", "\n".join(tg.suspension_lines([], later)))
+
+    def test_daily_report_includes_surveillance_section(self):
+        fd, state = tempfile.mkstemp(suffix=".json")
+        os.close(fd)
+        os.unlink(state)
+        n = tg.TelegramNotifier("TOKEN", state_file=state)
+        n.chat_id = 4242
+        n.last_report_day = "2026-07-14"
+        n.api = mock.MagicMock(return_value={})
+        fake_mt5.account_info.return_value = SimpleNamespace(
+            equity=10000.0, currency="EUR", balance=10000.0)
+        with mock.patch.object(tg, "read_trades", return_value=[]):
+            tg.maybe_daily_report(n, NOW)                # 19h : rapport du
+        sent = [c for c in n.api.call_args_list
+                if c[0][0] == "sendMessage"][0]
+        self.assertIn("Couples sous surveillance", sent[1]["text"])
+        self.assertIn("breakout EURUSD", sent[1]["text"])
+        os.path.exists(state) and os.unlink(state)
 
 
 class TestNotifier(unittest.TestCase):
