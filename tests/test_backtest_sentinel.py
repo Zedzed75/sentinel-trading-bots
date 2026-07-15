@@ -8,6 +8,7 @@ import sys
 import unittest
 from datetime import datetime, timedelta, timezone
 
+import numpy as np
 import pandas as pd
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "research"))
@@ -90,6 +91,83 @@ class TestBreakoutEngine(unittest.TestCase):
                                       sl_mult=1.5)
         self.assertEqual(len(trades), 1)
         self.assertEqual(trades[0]["r"], 0.5)
+
+
+class TestStatarbEngine(unittest.TestCase):
+    """Paire cointegree synthetique : a = 5 + 1.2*b + e (e stationnaire)."""
+
+    @staticmethod
+    def make_pair(e, seed=42):
+        """DataFrame M15 aligne ; e = serie du bruit stationnaire du spread."""
+        n = len(e)
+        rng = np.random.default_rng(seed)
+        b = 60 + np.cumsum(rng.normal(0, 0.2, n))
+        a = 5 + 1.2 * b + np.asarray(e, dtype=float)
+        times = pd.date_range("2026-01-05 00:00", periods=n, freq="15min",
+                              tz="UTC")
+        return pd.DataFrame({"time": times, "close_a": a, "close_b": b})
+
+    @staticmethod
+    def base_noise(n):
+        """Bruit uniforme borne +/-0.07 (sigma ~ 0.04) : |z| du bruit seul
+        reste < 2 (aucune entree parasite) et l'ADF rejette H0 nettement."""
+        return np.random.default_rng(3).uniform(-0.07, 0.07, n)
+
+    def test_buy_spread_converges_positive_r(self):
+        # ecartement a ~ -3 sigma sur 2 bougies puis retour a la moyenne
+        e = self.base_noise(360)
+        e[300:302] = -0.12
+        trades = bt.backtest_statarb(self.make_pair(e), hour_start=0,
+                                     hour_end=24)
+        self.assertEqual(len(trades), 1)
+        self.assertEqual(trades[0]["dir"], 1)          # BUY_SPREAD (z < 0)
+        self.assertEqual(trades[0]["reason"], "convergence")
+        self.assertGreater(trades[0]["r"], 0)
+
+    def test_z_stop_gives_negative_r(self):
+        # entree a ~ -3 sigma puis ecartement au-dela de 4 sigma
+        # (une seule bougie ecartee : |z| repasse sous 2 apres la sortie,
+        # sinon le moteur re-entre, comme le bot)
+        e = self.base_noise(360)
+        e[300] = -0.12
+        e[301] = -0.30
+        trades = bt.backtest_statarb(self.make_pair(e), hour_start=0,
+                                     hour_end=24)
+        self.assertEqual(len(trades), 1)
+        self.assertEqual(trades[0]["reason"], "z_stop")
+        self.assertLess(trades[0]["r"], 0)
+
+    def test_time_stop_after_max_bars(self):
+        # le spread reste ecarte sans converger ni exploser, puis revient
+        # a la moyenne juste apres le stop temporel (pas de re-entree)
+        e = self.base_noise(360)
+        e[300:309] = -0.12
+        trades = bt.backtest_statarb(self.make_pair(e), max_bars=8,
+                                     hour_start=0, hour_end=24)
+        self.assertEqual(len(trades), 1)
+        self.assertEqual(trades[0]["reason"], "time_stop")
+        self.assertEqual(trades[0]["bars"], 8)
+
+    def test_no_entry_outside_hours(self):
+        # meme ecartement, mais a 03:00 UTC : fenetre 07-20h fermee
+        e = self.base_noise(360)
+        e[300:302] = -0.12                  # bar 300 = +75h -> 03:00 UTC
+        trades = bt.backtest_statarb(self.make_pair(e),
+                                     hour_start=7, hour_end=20)
+        self.assertEqual(trades, [])
+
+    def test_no_entry_without_cointegration(self):
+        # marches aleatoires independants : l'ADF ne valide jamais l'entree
+        rng = np.random.default_rng(7)
+        n = 360
+        times = pd.date_range("2026-01-05 00:00", periods=n, freq="15min",
+                              tz="UTC")
+        df = pd.DataFrame({
+            "time": times,
+            "close_a": 100 + np.cumsum(rng.normal(0, 1, n)),
+            "close_b": 60 + np.cumsum(rng.normal(0, 1, n))})
+        trades = bt.backtest_statarb(df, hour_start=0, hour_end=24)
+        self.assertEqual(trades, [])
 
 
 class TestStats(unittest.TestCase):
