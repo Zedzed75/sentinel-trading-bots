@@ -167,6 +167,21 @@ class TestExecution(unittest.TestCase):
         st.run_cycle(self.active, self.guard, 16388, last_bars, now=self.NOON)
         self.assertEqual(fake_mt5.order_send.call_count, 1)
 
+    def test_production_config_halves_risk_on_losing_symbols(self):
+        # decision du 2026-07-15 (docs/AMELIORATION_CONTINUE.md section 5)
+        for name, expected in (("XAUUSD", 1.0), ("US500", 1.0),
+                               ("EURUSD", 0.5), ("GBPUSD", 0.5),
+                               ("XTIUSD", 0.5)):
+            self.assertEqual(st.TREND_PORTFOLIO[name]["risk_mult"], expected)
+
+    def test_risk_mult_halves_volume(self):
+        df = pd.DataFrame(self._rates([100.0] * 20))
+        st.open_trend_trade("XAUUSD.p", "BUY", 5001, df, risk_mult=1.0)
+        full = fake_mt5.order_send.call_args[0][0]["volume"]
+        st.open_trend_trade("XAUUSD.p", "BUY", 5001, df, risk_mult=0.5)
+        half = fake_mt5.order_send.call_args[0][0]["volume"]
+        self.assertAlmostEqual(half, full / 2, places=2)
+
     def test_rollover_blackout_defers_entry(self):
         closes = [100.0] * (st.ENTRY_CHANNEL + 1) + [103.0, 103.0]
         fake_mt5.copy_rates_from_pos.return_value = self._rates(closes)
