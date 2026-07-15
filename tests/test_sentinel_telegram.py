@@ -106,6 +106,59 @@ class TestDealsAndLocks(unittest.TestCase):
         self.assertFalse(tg.should_send_daily("2026-07-14", early))
 
 
+class TestEntryWindows(unittest.TestCase):
+    """/status : chaque strategie peut-elle ouvrir un trade maintenant ?"""
+
+    @staticmethod
+    def _at(hour):
+        return "\n".join(tg.entry_status_lines(
+            NOW.replace(hour=hour, minute=30)))
+
+    def test_registry_matches_bot_configs(self):
+        # breakout 8-16, reversion 13-18 (bot 1), statarb 7-20 (bot 2),
+        # trend : blackout rollover 21-23 (bot 3)
+        by_strat = {w["strategy"]: (w["start"], w["end"])
+                    for w in tg.ENTRY_WINDOWS}
+        self.assertEqual(by_strat["breakout (bot 1)"], (8, 16))
+        self.assertEqual(by_strat["reversion (bot 1)"], (13, 18))
+        self.assertEqual(by_strat["statarb (bot 2)"], (7, 20))
+        self.assertEqual(by_strat["trend (bot 3)"], (23, 21))
+
+    def test_morning_10h(self):
+        txt = self._at(10)
+        self.assertIn("breakout (bot 1) : peut trader jusqu'a 16:00", txt)
+        self.assertIn("reversion (bot 1) : ⏳ fenetre fermee, "
+                      "ouvre a 13:00", txt)
+        self.assertIn("statarb (bot 2) : peut trader jusqu'a 20:00", txt)
+        self.assertIn("trend (bot 3) : peut trader", txt)
+
+    def test_rollover_22h_only_trend_blackout_applies(self):
+        txt = self._at(22)
+        self.assertIn("trend (bot 3) : ⏳ fenetre fermee, ouvre a 23:00", txt)
+        self.assertIn("breakout (bot 1) : ⏳ fenetre fermee, "
+                      "ouvre a 08:00", txt)
+
+    def test_wrap_around_trend_open_after_23h(self):
+        self.assertIn("trend (bot 3) : peut trader jusqu'a 21:00",
+                      self._at(23))
+        self.assertIn("trend (bot 3) : peut trader jusqu'a 21:00",
+                      self._at(3))
+
+    def test_breakout_note_mentions_suspensions(self):
+        self.assertIn("XAUUSD uniquement, EURUSD/GBPUSD suspendus",
+                      self._at(10))
+
+    def test_status_text_includes_windows_section(self):
+        fake_mt5.account_info.return_value = SimpleNamespace(
+            equity=10000.0, currency="EUR", balance=10000.0)
+        fake_mt5.positions_get.return_value = []
+        with mock.patch.object(tg, "bots_processes", return_value={}), \
+             mock.patch.object(tg, "active_locks", return_value=[]):
+            txt = tg.status_text(NOW)
+        self.assertIn("Fenetres d'entree (UTC) :", txt)
+        self.assertIn("statarb (bot 2)", txt)
+
+
 class TestSuspensions(unittest.TestCase):
     """Suivi des couples suspendus/reduits dans le rapport quotidien."""
 
