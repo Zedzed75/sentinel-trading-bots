@@ -126,7 +126,7 @@ d'entree). Resultats sur 3 ans de M15 broker (65 206 bougies communes) :
 
 | Paire | Total | Moitie 1 | Moitie 2 | Verdict |
 |---|---|---|---|---|
-| Brent/WTI | +40.3R (n=336, PF 1.26) | +12.9R (PF 1.16) | +27.3R (PF 1.38) | **sain** - positif sur les deux moities |
+| Brent/WTI | +40.3R (n=336, PF 1.26) | +12.9R (PF 1.16) | +27.3R (PF 1.38) | **sain** - positif sur les deux moities, et TOUTE la grille (entry_z 1.5-2.5 x max_bars 32-64, 9 variantes) est positive sur les deux moities (PF total 1.16-1.38) : plateau robuste, pas un pic |
 
 Limites du rejeu : SL durs par jambe et purge de jambe orpheline non
 simules, stop temporel en bougies alignees (le bot compte en heure
