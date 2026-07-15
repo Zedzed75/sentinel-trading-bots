@@ -38,9 +38,10 @@ def _deal(pos, entry, dtype=0, time=T0, volume=1.0, price=100.0,
 
 
 def _trade(pnl, close_time=NOW, strategy="breakout", symbol="XAUUSD.p"):
+    open_time = close_time - timedelta(hours=2)
     return {"position_id": 1, "symbol": symbol, "magic": 1001,
             "strategy": strategy, "direction": "long", "volume": 1.0,
-            "open_time": close_time - timedelta(hours=2),
+            "open_time": open_time, "open_hour": f"{open_time.hour:02d}h",
             "close_time": close_time, "duration_h": 2.0, "pnl": pnl}
 
 
@@ -110,6 +111,14 @@ class TestBuildTrades(unittest.TestCase):
                          - timedelta(hours=3))
         self.assertAlmostEqual(t["duration_h"], 2.0)   # duree inchangee
 
+    def test_open_hour_follows_utc_conversion(self):
+        # T0 = 12:00 UTC ; estampille serveur UTC+3 -> ouverture 09:00 UTC
+        deals = [_deal(16, entry=0, time=T0),
+                 _deal(16, entry=1, time=T0 + 7200, profit=10.0)]
+        self.assertEqual(sa.build_trades(deals)[0]["open_hour"], "12h")
+        self.assertEqual(sa.build_trades(deals, offset_h=3.0)[0]["open_hour"],
+                         "09h")
+
     def test_trades_sorted_by_close_time(self):
         deals = [
             _deal(20, entry=0, time=T0), _deal(20, entry=1, time=T0 + 9999),
@@ -172,6 +181,18 @@ class TestOutputs(unittest.TestCase):
         self.assertIn("statarb", html)
         self.assertIn("93.5", html)
         self.assertIn("Sentinel", html)
+
+    def test_report_breaks_down_by_open_hour(self):
+        # deux strategies, ouvertures a 10:00 et 07:00 UTC (cloture +2h)
+        trades = [_trade(50.0, NOW, strategy="breakout"),
+                  _trade(-10.0, NOW - timedelta(hours=3),
+                         strategy="reversion")]
+        html = sa.render_html(trades, NOW)
+        self.assertIn("Par heure d'ouverture UTC", html)
+        self.assertIn("<h3>breakout</h3>", html)
+        self.assertIn("<h3>reversion</h3>", html)
+        self.assertIn("<td>10h</td>", html)     # NOW 12:00 - 2h
+        self.assertIn("<td>07h</td>", html)     # NOW - 3h - 2h
 
     def test_run_cycle_writes_both_files(self):
         fake_mt5.history_deals_get.return_value = [
