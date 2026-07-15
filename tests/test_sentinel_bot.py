@@ -11,7 +11,6 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest import mock
 
-import numpy as np
 import pandas as pd
 
 # --- Mock des dependances externes avant l'import du bot ---------------------
