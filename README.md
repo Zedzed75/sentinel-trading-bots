@@ -7,7 +7,7 @@ independants, concus en TDD. Compte demo recommande.
 
 ```
 bots/     les 6 bots (fichiers autonomes, sans imports croises)
-tests/    les 7 suites de tests (142 tests, MT5 mocke)
+tests/    les 7 suites de tests (147 tests, MT5 mocke)
 docs/     ARCHITECTURE.md (le code), STRATEGIE.md (l'investissement),
           AMELIORATION_CONTINUE.md (mesure et correction des strategies)
 research/ backtest_sentinel.py (rejoue les regles des bots sur
@@ -69,7 +69,7 @@ bot 1 pour les tests en direct ; laisser a `False` en production.
 
 ## Tests
 
-142 tests, MT5 et yfinance mockes (executables sans terminal) :
+147 tests, MT5 et yfinance mockes (executables sans terminal) :
 
 ```
 python -m unittest discover -s tests -v
@@ -85,7 +85,7 @@ La branche `master` est protegee :
    branche puis une pull request.
 2. **Une validation (review approuvee) est requise** pour merger une PR ;
    une nouvelle serie de commits invalide les approbations precedentes.
-3. **La CI doit etre verte** (job `test`, les 142 tests) avant le merge,
+3. **La CI doit etre verte** (job `test`, la suite complete) avant le merge,
    et la branche doit etre a jour avec `master`.
 4. **Force-push et suppression de `master` interdits.**
 
