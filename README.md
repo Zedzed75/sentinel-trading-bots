@@ -6,8 +6,9 @@ independants, concus en TDD. Compte demo recommande.
 ## Structure
 
 ```
-bots/     les 6 bots (fichiers autonomes, sans imports croises)
-tests/    les 7 suites de tests (147 tests, MT5 mocke)
+bots/     les 6 bots (sans imports croises) + sentinel_signals.py
+          (fonctions pures du bot 1)
+tests/    les 8 suites de tests (147 tests, MT5 mocke)
 docs/     ARCHITECTURE.md (le code), STRATEGIE.md (l'investissement),
           AMELIORATION_CONTINUE.md (mesure et correction des strategies)
 research/ backtest_sentinel.py (rejoue les regles des bots sur
