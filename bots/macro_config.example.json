@@ -1,0 +1,12 @@
+{
+  "anthropic_api_key": "sk-ant-CHANGER-MOI",
+  "social_feeds": [],
+  "bank_feeds": [],
+  "model_mapping": {
+    "agent_geopolitics": "claude-fable-5",
+    "agent_macro": "claude-fable-5",
+    "agent_sentiment": "claude-haiku-4-5",
+    "agent_flow_trader": "claude-haiku-4-5",
+    "agent_juge_synthesizer": "claude-opus-4-8"
+  }
+}
