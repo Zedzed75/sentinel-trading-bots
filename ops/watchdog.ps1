@@ -17,7 +17,8 @@ $Bots = @(
     "sentinel_alpha_compound.py",
     "sentinel_trend.py",
     "sentinel_trade_analytics.py",
-    "sentinel_telegram.py"
+    "sentinel_telegram.py",
+    "sentinel_macro_analyst.py"
 )
 # Age max du heartbeat (logs/<bot>.hb, ecrit apres chaque cycle reussi).
 # Au-dela : processus vivant mais gele -> kill + relance. Le bot 5 a un
@@ -29,6 +30,7 @@ $HbLimitSec = @{
     "sentinel_trend.py"             = 300
     "sentinel_trade_analytics.py"   = 2700
     "sentinel_telegram.py"          = 300
+    "sentinel_macro_analyst.py"     = 300
 }
 
 New-Item -ItemType Directory -Force $LogDir | Out-Null

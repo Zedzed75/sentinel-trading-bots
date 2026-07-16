@@ -93,7 +93,7 @@ LOCK_SOURCES = {
 }
 FLEET_BOTS = ("sentinel_risk_orchestrator.py", "sentinel_bot.py",
               "sentinel_alpha_compound.py", "sentinel_trend.py",
-              "sentinel_trade_analytics.py")
+              "sentinel_trade_analytics.py", "sentinel_macro_analyst.py")
 
 API_URL = "https://api.telegram.org/bot{token}/{method}"
 

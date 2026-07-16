@@ -69,7 +69,7 @@ class TestRobustReads(unittest.TestCase):
              mock.patch.object(dash, "TRADES_CSV", "introuvable.csv"):
             state = dash.build_state(NOW)
         self.assertFalse(state["compte"]["ok"])
-        self.assertEqual(len(state["bots"]), 6)
+        self.assertEqual(len(state["bots"]), 7)
         self.assertTrue(all(b["statut"] == "arrete" for b in state["bots"]))
         self.assertIsNone(state["jauge_jour"]["pct"])
         self.assertFalse(state["verrou_global"])
@@ -164,7 +164,7 @@ class TestAuth(unittest.TestCase):
             r = self.client.get("/api/state", auth=("sentinel", "bon"))
             page = self.client.get("/", auth=("sentinel", "bon"))
         self.assertEqual(r.status_code, 200)
-        self.assertEqual(len(r.json()["bots"]), 6)
+        self.assertEqual(len(r.json()["bots"]), 7)
         self.assertEqual(page.status_code, 200)
         self.assertIn("Sentinel", page.text)
 

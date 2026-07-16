@@ -148,7 +148,11 @@ reel uniquement (seuils section 4).
    les fenetres avec des trades reels plutot qu'au backtest.
 3. Deflated Sharpe Ratio sur le journal reel des que n >= 100 trades.
 4. Filtre d'evenements macro (NFP, FOMC, CPI) pour le bot 1, backteste
-   avant deploiement.
+   avant deploiement. *Premier etage fait le 2026-07-16* : le bot 7
+   (`sentinel_macro_analyst.py`) publie une meteo macro quotidienne
+   (calendrier + debat LLM contradictoire) dans `macro_weather.json` -
+   INFORMATIVE uniquement ; le filtre de trading reste a backtester
+   avant tout branchement sur le sizing.
 5. ~~Purge automatique des couples suspendus reevalues chaque trimestre.~~
    *Fait le 2026-07-15* : le rapport quotidien Telegram rappelle chaque
    couple suspendu/reduit, les trades reels accumules depuis la decision

@@ -67,6 +67,8 @@ FLEET = (
      "hb_max": 2700, "strategies": (), "state": None},
     {"id": 6, "script": "sentinel_telegram.py", "nom": "Telegram",
      "hb_max": 300, "strategies": (), "state": None},
+    {"id": 7, "script": "sentinel_macro_analyst.py", "nom": "Macro Analyst",
+     "hb_max": 300, "strategies": (), "state": None},
 )
 
 log = logging.getLogger("dashboard")
