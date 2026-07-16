@@ -152,7 +152,11 @@ reel uniquement (seuils section 4).
    (`sentinel_macro_analyst.py`) publie une meteo macro quotidienne
    (calendrier + debat LLM contradictoire) dans `macro_weather.json` -
    INFORMATIVE uniquement ; le filtre de trading reste a backtester
-   avant tout branchement sur le sizing.
+   avant tout branchement sur le sizing. *Etape 1 lancee le 2026-07-16* :
+   archive quotidienne `macro_history.json` (meteo, confiance, focus,
+   actif principal) a croiser avec le journal reel du bot 5 apres 30
+   jours ; branchement eventuel via `risk_scale.json` (multiplicateur
+   leger, jamais binaire) seulement si la valeur predictive est prouvee.
 5. ~~Purge automatique des couples suspendus reevalues chaque trimestre.~~
    *Fait le 2026-07-15* : le rapport quotidien Telegram rappelle chaque
    couple suspendu/reduit, les trades reels accumules depuis la decision
