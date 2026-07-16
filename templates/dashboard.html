@@ -1,142 +1,75 @@
 <!doctype html>
-<html lang="fr" data-theme="night">
+<html lang="fr" data-theme="forest">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Sentinel — Dashboard</title>
 <link href="https://cdn.jsdelivr.net/npm/daisyui@4/dist/full.min.css" rel="stylesheet" type="text/css">
 <script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/htmx.org@2/dist/htmx.min.js"></script>
 </head>
 <body class="min-h-screen bg-base-300 p-3 sm:p-6">
+<div class="max-w-2xl mx-auto space-y-4">
 
-<div class="max-w-5xl mx-auto space-y-4">
-
-  <!-- En-tete : compte -->
   <div class="flex items-center justify-between">
-    <h1 class="text-xl font-bold">🛡️ Sentinel</h1>
-    <span id="heure" class="text-xs opacity-60">—</span>
+    <h1 class="text-xl font-bold tracking-wide">🛡️ SENTINEL <span class="text-xs opacity-50 font-normal">v1.0.0{% if mock %} · MOCK{% endif %}</span></h1>
   </div>
 
-  <div id="alerte-marge" class="alert alert-error hidden">
-    ⚠️ Niveau de marge sous {{ seuil_marge }}% — risque d'appel de marge.
-  </div>
-  <div id="alerte-verrou" class="alert alert-error hidden">
-    🚨 VERROU GLOBAL ACTIF : la flotte est fermée (analyse humaine requise).
+  <!-- Fragment live : rafraichi par HTMX toutes les 10 s -->
+  <div id="live" hx-get="partial/live" hx-trigger="every 10s" hx-swap="innerHTML">
+    {% include "_live.html" %}
   </div>
 
-  <div class="stats stats-vertical sm:stats-horizontal shadow w-full bg-base-100">
-    <div class="stat py-3">
-      <div class="stat-title">Balance</div>
-      <div class="stat-value text-2xl" id="balance">—</div>
-    </div>
-    <div class="stat py-3">
-      <div class="stat-title">Équité</div>
-      <div class="stat-value text-2xl" id="equity">—</div>
-    </div>
-    <div class="stat py-3">
-      <div class="stat-title">Marge libre</div>
-      <div class="stat-value text-2xl" id="marge">—</div>
-      <div class="stat-desc" id="niveau-marge">niveau : —</div>
-    </div>
-  </div>
-
-  <!-- Coupe-circuits -->
+  <!-- C. Debat & Insights (bot 7) — statique : change une fois par jour -->
+  {% set W = state.meteo %}
   <div class="card bg-base-100 shadow">
     <div class="card-body py-4">
-      <h2 class="card-title text-base">Coupe-circuit journalier (bot 1)</h2>
-      <div class="flex items-center gap-3">
-        <progress id="jauge" class="progress progress-success flex-1" value="0" max="1"></progress>
-        <span id="jauge-pct" class="font-mono text-sm w-24 text-right">—</span>
+      <h2 class="card-title text-base">🧠 Débat &amp; Insights (Bot 7)</h2>
+      {% if W %}
+      <div role="tablist" class="tabs tabs-lifted">
+        <input type="radio" name="insights" role="tab" class="tab whitespace-nowrap" aria-label="⚖️ Le Choc des Thèses" checked>
+        <div role="tabpanel" class="tab-content bg-base-100 border-base-300 rounded-box p-4 space-y-3 text-sm">
+          <div class="chat chat-start"><div class="chat-bubble chat-bubble-info">🌍 <b>Géopolitique :</b> {{ W.geo_resume or "—" }}</div></div>
+          <div class="chat chat-end"><div class="chat-bubble chat-bubble-secondary">🏦 <b>Macro :</b> {{ W.macro_resume or "—" }}</div></div>
+          <div class="chat chat-start"><div class="chat-bubble chat-bubble-accent">📣 <b>Sentiment :</b> {{ W.sentiment_resume or "—" }}</div></div>
+        </div>
+        <input type="radio" name="insights" role="tab" class="tab" aria-label="💼 Bank Targets">
+        <div role="tabpanel" class="tab-content bg-base-100 border-base-300 rounded-box p-4 text-sm">
+          {{ W.banks_resume or "aucune cible publiée" }}
+        </div>
+        <input type="radio" name="insights" role="tab" class="tab" aria-label="🎯 Conflit">
+        <div role="tabpanel" class="tab-content bg-base-100 border-base-300 rounded-box p-4 text-sm italic">
+          {{ W.conflict or "aucun conflit notable" }}
+        </div>
       </div>
-      <div class="text-xs opacity-60">seuil critique : <span id="jauge-seuil">-4</span>% d'équité vs balance du jour (verrou jusqu'à minuit UTC)</div>
-      <div class="text-xs" id="risk-scale">risk scale : —</div>
+      {% else %}
+      <div class="space-y-2">
+        <div class="skeleton h-4 w-full"></div>
+        <div class="skeleton h-4 w-2/3"></div>
+        <p class="text-xs opacity-50">météo indisponible — le bot 7 publiera à 08h00 UTC (ou FORCE RUN ci-dessous)</p>
+      </div>
+      {% endif %}
     </div>
   </div>
 
-  <!-- Grille des bots -->
-  <div id="bots" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3"></div>
-
-  <!-- Trades actifs -->
-  <div class="card bg-base-100 shadow">
-    <div class="card-body py-4">
-      <h2 class="card-title text-base">Trades actifs <span id="nb-pos" class="badge badge-neutral">0</span></h2>
-      <div class="overflow-x-auto">
-        <table class="table table-sm">
-          <thead><tr><th>Symbole</th><th>Sens</th><th>Vol.</th><th>PnL latent</th><th>Stratégie</th></tr></thead>
-          <tbody id="positions"><tr><td colspan="5" class="opacity-50">aucune position</td></tr></tbody>
-        </table>
-      </div>
+  <!-- D. Panel de controle d'urgence -->
+  <div class="card bg-base-100 shadow border border-error/30">
+    <div class="card-body py-4 space-y-3">
+      <h2 class="card-title text-base">🕹️ Contrôle d'urgence</h2>
+      <button class="btn btn-error btn-block shadow-lg shadow-error/40"
+              hx-post="api/panic" hx-target="#action-result" hx-swap="innerHTML"
+              hx-confirm="⚠️ FERMER TOUTES LES POSITIONS et verrouiller la flotte (déverrouillage manuel) — confirmer ?">
+        🚨 PANIC : CLOSE ALL
+      </button>
+      <button class="btn btn-info btn-block shadow-lg shadow-info/40"
+              hx-post="api/forcerun" hx-target="#action-result" hx-swap="innerHTML"
+              hx-confirm="Lancer le pipeline météo du Bot 7 maintenant ?">
+        🔄 FORCE RUN : BOT 7
+      </button>
+      <div id="action-result" class="text-sm min-h-5"></div>
     </div>
   </div>
 
-  <!-- Systeme -->
-  <div class="text-xs opacity-60 flex gap-4 justify-center pb-4" id="systeme">—</div>
 </div>
-
-<script>
-const STATUTS = {
-  actif:      ['ACTIF',      'badge-success'],
-  fige:       ['FIGÉ',       'badge-warning'],
-  arrete:     ['ARRÊTÉ',     'badge-error'],
-  suspendu:   ['VERROUILLÉ', 'badge-error'],
-};
-const eur = v => v === null || v === undefined ? '—'
-  : v.toLocaleString('fr-FR', {maximumFractionDigits: 2});
-const signe = v => (v > 0 ? 'text-success' : v < 0 ? 'text-error' : '');
-
-async function refresh() {
-  let s;
-  try { s = await (await fetch('api/state')).json(); }
-  catch (e) { document.getElementById('heure').textContent = 'hors ligne…'; return; }
-
-  document.getElementById('heure').textContent = s.heure;
-  document.getElementById('balance').textContent = eur(s.compte.balance);
-  document.getElementById('equity').textContent = eur(s.compte.equity);
-  document.getElementById('marge').textContent = eur(s.compte.margin_free);
-  document.getElementById('niveau-marge').textContent =
-    'niveau : ' + (s.compte.margin_level === null ? '—' : s.compte.margin_level + '%');
-  document.getElementById('alerte-marge').classList.toggle('hidden', !s.marge_alerte);
-  document.getElementById('alerte-verrou').classList.toggle('hidden', !s.verrou_global);
-
-  const j = s.jauge_jour, jauge = document.getElementById('jauge');
-  jauge.value = j.used;
-  jauge.className = 'progress flex-1 ' +
-    (j.used > 0.75 ? 'progress-error' : j.used > 0.4 ? 'progress-warning' : 'progress-success');
-  document.getElementById('jauge-pct').textContent = j.pct === null ? '—' : j.pct + '%';
-  document.getElementById('jauge-seuil').textContent = j.limit_pct;
-  document.getElementById('risk-scale').textContent =
-    'risk scale : ' + (s.risk_scale === null ? '—' : s.risk_scale);
-
-  document.getElementById('bots').innerHTML = s.bots.map(b => {
-    const [label, badge] = STATUTS[b.statut] || [b.statut, 'badge-neutral'];
-    const pnl = b.trade
-      ? `<span class="font-mono ${signe(b.pnl_jour)}">${eur(b.pnl_jour)}</span>
-         <span class="opacity-60">· ${b.trades_jour} trade(s)</span>`
-      : '<span class="opacity-40">ne trade pas</span>';
-    return `<div class="card bg-base-100 shadow"><div class="card-body py-3 px-4">
-      <div class="flex justify-between items-center">
-        <span class="font-semibold">Bot ${b.id} — ${b.nom}</span>
-        <span class="badge ${badge} badge-sm">${label}</span></div>
-      <div class="text-sm">PnL du jour : ${pnl}</div>
-    </div></div>`;
-  }).join('');
-
-  const pos = s.positions;
-  document.getElementById('nb-pos').textContent = pos.length;
-  document.getElementById('positions').innerHTML = pos.length === 0
-    ? '<tr><td colspan="5" class="opacity-50">aucune position</td></tr>'
-    : pos.map(p => `<tr><td>${p.symbol}</td>
-        <td><span class="badge badge-sm ${p.sens === 'LONG' ? 'badge-success' : 'badge-error'}">${p.sens}</span></td>
-        <td class="font-mono">${p.volume}</td>
-        <td class="font-mono ${signe(p.pnl)}">${eur(p.pnl)}</td>
-        <td class="opacity-70">${p.strategie}</td></tr>`).join('');
-
-  const sys = s.systeme;
-  document.getElementById('systeme').textContent =
-    `CPU ${sys.cpu ?? '—'}% · RAM ${sys.ram ?? '—'}% · watchdog ${sys.watchdog ? 'OK ✅' : 'ABSENT ⚠️'}`;
-}
-refresh();
-setInterval(refresh, 10000);
-</script>
 </body>
 </html>

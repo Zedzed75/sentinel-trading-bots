@@ -208,11 +208,19 @@ def should_send(state: dict, now: datetime) -> bool:
 
 
 def write_weather(verdict: dict, now: datetime, path: str | None = None):
-    """Sortie 1 : le fichier partage macro_weather.json (ecriture atomique)."""
+    """Sortie 1 : le fichier partage macro_weather.json (ecriture atomique).
+
+    Contient aussi les resumes du conseil et le conflit du jour : le
+    dashboard les affiche dans ses onglets Debat/Cibles/Conflit."""
     save_json_atomic(path or WEATHER_FILE, {
         "weather": verdict["weather"],
         "confidence": round(float(verdict["confidence"]), 2),
         "focus": verdict["focus"],
+        "geo_resume": verdict.get("geo_resume", ""),
+        "macro_resume": verdict.get("macro_resume", ""),
+        "sentiment_resume": verdict.get("sentiment_resume", ""),
+        "banks_resume": verdict.get("banks_resume", ""),
+        "conflict": verdict.get("conflict", ""),
         "date": now.date().isoformat(),
         "generated_at": now.isoformat(),
     })
@@ -358,7 +366,9 @@ async def main_async(once: bool = False) -> int:
         now = datetime.now(timezone.utc)
         await collect_and_judge(llm, state, now)
         print(state["report"])
-        await send_telegram(state["report"])
+        if await send_telegram(state["report"]):
+            state["last_send_day"] = now.date().isoformat()
+            save_json_atomic(STATE_FILE, state)   # pas de double envoi
         return 0
     log.info("Demarrage SENTINEL MACRO ANALYST (ingestion %02d:00, envoi "
              "%02d:%02d UTC, %d agents + synthetiseur)",
