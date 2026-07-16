@@ -210,21 +210,29 @@ async def collect_all(extra_social: tuple = (), extra_bank: tuple = (),
             "banks": banks}
 
 
-def build_dossier(sources: dict, now: datetime) -> str:
-    """Dossier commun remis aux trois agents specialises."""
+_BLOCKS = (
+    ("calendar", "ANNONCES MACRO MAJEURES DU JOUR (impact High, USD/EUR/GBP)",
+     "aucune annonce majeure"),
+    ("geo", "GEOPOLITIQUE & ENERGIE (⚠ = surveillance prioritaire)",
+     "flux indisponibles"),
+    ("social", "DECLARATIONS D'INFLUENCEURS & RESEAUX SOCIAUX (filtrees actifs)",
+     "aucune declaration pertinente"),
+    ("banks", "BANK DESKS & RECHERCHE SELL-SIDE (positionnement, niveaux)",
+     "aucune note bancaire"),
+)
+
+
+def build_dossier(sources: dict, now: datetime,
+                  only: tuple | None = None) -> str:
+    """Dossier remis aux agents ; `only` restreint aux sections utiles a
+    l'agent (economie de tokens : chaque specialiste ne recoit que ses
+    sources, seul le synthetiseur voit tout)."""
     def block(title, lines, empty):
-        return f"{title} :\n" + ("\n".join(f"- {ln}" if not ln.startswith(("-", "⚠"))
-                                           else ln for ln in lines)
-                                 if lines else f"- {empty}")
-    return (f"Date : {now:%A %d/%m/%Y} ({now:%H:%M} UTC)\n\n"
-            + block("ANNONCES MACRO MAJEURES DU JOUR (impact High, USD/EUR/GBP)",
-                    sources.get("calendar", []), "aucune annonce majeure")
-            + "\n\n"
-            + block("GEOPOLITIQUE & ENERGIE (⚠ = surveillance prioritaire)",
-                    sources.get("geo", []), "flux indisponibles")
-            + "\n\n"
-            + block("DECLARATIONS D'INFLUENCEURS & RESEAUX SOCIAUX (filtrees actifs)",
-                    sources.get("social", []), "aucune declaration pertinente")
-            + "\n\n"
-            + block("BANK DESKS & RECHERCHE SELL-SIDE (positionnement, niveaux)",
-                    sources.get("banks", []), "aucune note bancaire"))
+        return f"{title} :\n" + ("\n".join(
+            ln if ln.startswith(("-", "⚠")) else f"- {ln}" for ln in lines)
+            if lines else f"- {empty}")
+    parts = [f"Date : {now:%A %d/%m/%Y} ({now:%H:%M} UTC)"]
+    parts += [block(title, sources.get(key, []), empty)
+              for key, title, empty in _BLOCKS
+              if only is None or key in only]
+    return "\n\n".join(parts)

@@ -9,10 +9,11 @@ Ne trade pas et ne touche pas a MT5. Chaque matin :
   (sortie JSON structuree garantie par schema).
 - 08:30 UTC : publie la "Meteo du Marche" sur le canal Telegram existant.
 
-Modeles (API Anthropic, seule infra de cles du projet) : les agents de
-raisonnement tournent sur claude-opus-4-8 (thinking adaptatif), le scanner
-de sentiment sur claude-haiku-4-5 (rapide/economique, comme le haiku
-demande par la spec), le synthetiseur sur claude-opus-4-8.
+Modeles (API Anthropic) : mapping fin par agent, surchargeable via
+macro_config.json "model_mapping" - defauts : geo/macro sur claude-fable-5
+(effort low + fallback serveur opus en cas de refus classifieur),
+sentiment/flux sur claude-haiku-4-5, juge sur claude-opus-4-8. Sobriete de
+tokens : dossiers sectorises par agent, limites de mots, MAX_TOKENS 4000.
 
 Sorties : bots/macro_weather.json ({"weather", "confidence", ...}) et le
 rapport Telegram. INFORMATIF : aucun sizing modifie tant que le filtre
@@ -45,10 +46,20 @@ COLLECT_HOUR = 8              # 08:00 UTC : ingestion + conseil LLM
 SEND_HOUR, SEND_MINUTE = 8, 30  # 08:30 UTC : envoi Telegram
 POLL_SECONDS = 30
 
-MODEL_REASONING = "claude-opus-4-8"   # agents 1-2 et synthetiseur
-MODEL_SCANNER = "claude-haiku-4-5"    # agent 3 (bruit social, cout minimal)
-MAX_TOKENS = 16000            # analyses courtes, marge pour le thinking
-
+# Modeles par agent, surchargeables via macro_config.json "model_mapping"
+# (memes cles). fable-5 : raisonnement maximal pour geo/macro, thinking
+# integre au modele, repli serveur vers opus-4-8 si un classifieur refuse
+# (sujets sanctions/conflits) ; haiku-4-5 : scanners a cout minimal ;
+# opus-4-8 : le juge (sortie structuree). Sobriete de tokens : effort low
+# sur les agents fable, plafond dur MAX_TOKENS, dossiers sectorises.
+DEFAULT_MODELS = {
+    "agent_geopolitics": "claude-fable-5",
+    "agent_macro": "claude-fable-5",
+    "agent_sentiment": "claude-haiku-4-5",
+    "agent_flow_trader": "claude-haiku-4-5",
+    "agent_juge_synthesizer": "claude-opus-4-8",
+}
+MAX_TOKENS = 4000             # plafond dur par appel (theses courtes)
 FETCH_TIMEOUT = 20.0
 
 _DIR = os.path.dirname(os.path.abspath(__file__))
@@ -78,35 +89,35 @@ WEATHER_META = {
 # Le conseil : trois agents specialises, roles systeme distincts.
 AGENTS = (
     {"cle": "geo", "nom": "Geopolitique",
-     "model": MODEL_REASONING,
+     "model_key": "agent_geopolitics", "sections": ("calendar", "geo"),
      "system": (
          "Tu es un analyste geopolitique senior specialise dans les goulots "
          "d'etranglement de l'energie (detroit d'Ormuz, Bab el-Mandeb, mer "
          "Rouge) et les metaux precieux. A partir du dossier, evalue "
          "l'impact des tensions du jour sur l'Or (XAU) et le Petrole "
          "(Brent/WTI) : risque d'escalade, primes de risque, flux refuge. "
-         "3 a 5 phrases en francais, elements concrets du dossier, "
-         "uniquement l'analyse.")},
+         "3 a 5 phrases, 80 mots maximum, en francais, elements "
+         "concrets du dossier, uniquement l'analyse.")},
     {"cle": "macro", "nom": "Macro & banques centrales",
-     "model": MODEL_REASONING,
+     "model_key": "agent_macro", "sections": ("calendar", "geo"),
      "system": (
          "Tu es un economiste de marche. Analyse la politique de la Fed, "
          "l'inflation, les taux d'interet et le calendrier economique du "
          "dossier ; evalue l'impact attendu sur USD, EUR, GBP et les "
-         "indices pour la journee (heures UTC des annonces). 3 a 5 phrases "
-         "en francais, uniquement l'analyse.")},
+         "indices pour la journee (heures UTC des annonces). 3 a 5 "
+         "phrases, 80 mots maximum, en francais, uniquement l'analyse.")},
     {"cle": "sentiment", "nom": "Sentiment & reseaux sociaux",
-     "model": MODEL_SCANNER,
+     "model_key": "agent_sentiment", "sections": ("social",),
      "system": (
          "Tu es un specialiste de la psychologie des foules et du "
          "sentiment de marche. Analyse les declarations d'influenceurs du "
          "dossier (Trump, Musk, officiels US/Chine...) et detecte si une "
          "rumeur ou une annonce non conventionnelle peut creer une panique "
          "ou un mouvement violent a l'ouverture. Ignore le bruit sans lien "
-         "avec l'or, le petrole ou les devises. 2 a 4 phrases en francais, "
-         "uniquement l'analyse.")},
+         "avec l'or, le petrole ou les devises. 2 a 4 phrases, 60 mots "
+         "maximum, en francais, uniquement l'analyse.")},
     {"cle": "flux", "nom": "Stratege de flux (sell-side)",
-     "model": MODEL_SCANNER,
+     "model_key": "agent_flow_trader", "sections": ("banks",),
      "system": (
          "Tu es un stratege de marche sell-side dans une grande banque "
          "d'affaires. A partir des notes bank desks du dossier (Goldman "
@@ -116,7 +127,7 @@ AGENTS = (
          "massive (stop hunting, poches de liquidite) sur l'Or et le "
          "Forex. Cite banque et niveau quand le dossier les donne ; "
          "n'invente JAMAIS un niveau de prix absent du dossier. 2 a 4 "
-         "phrases en francais, uniquement l'analyse.")},
+         "phrases, 60 mots maximum, en francais, uniquement l'analyse.")},
 )
 
 PROMPT_SYNTH = (
@@ -132,7 +143,8 @@ PROMPT_SYNTH = (
     "'cibles bancaires' (banque + niveau si le dossier en donne, sinon "
     "'aucune cible publiee') et le CONFLIT D'INTERET DU JOUR : le "
     "desaccord le plus significatif entre deux analystes et comment tu le "
-    "tranches (ou 'aucun conflit notable'). Reponds en francais.")
+    "tranches (ou 'aucun conflit notable'). Reponds en francais, "
+    "chaque champ en une seule phrase dense.")
 
 SYNTH_SCHEMA = {
     "type": "object",
@@ -227,37 +239,71 @@ def write_weather(verdict: dict, now: datetime, path: str | None = None):
 
 
 # ----------------------------------------------------------------------------
-# Le conseil multi-agents (3 specialistes en parallele, puis le synthetiseur)
+# Le conseil multi-agents (4 specialistes en parallele, puis le synthetiseur)
 # ----------------------------------------------------------------------------
-async def _analysis(llm: AsyncAnthropic, agent: dict, dossier: str) -> str:
-    kwargs: dict = {"model": agent["model"], "max_tokens": MAX_TOKENS,
-                    "system": agent["system"],
-                    "messages": [{"role": "user", "content": dossier}]}
-    if agent["model"] == MODEL_REASONING:   # haiku 4.5 : pas d'adaptatif
-        kwargs["thinking"] = {"type": "adaptive"}
-    resp = await llm.messages.create(**kwargs)
+def agent_models() -> dict:
+    """Mapping effectif : defauts + surcharges de macro_config.json."""
+    return DEFAULT_MODELS | (load_json(CONFIG_FILE).get("model_mapping")
+                             or {})
+
+
+def _llm_kwargs(model: str) -> dict:
+    """Parametres imposes par la famille de modele (regles API) :
+    fable-5 = thinking toujours actif (parametre omis) + effort low +
+    fallback serveur vers opus ; haiku 4.5 = ni adaptatif ni effort ;
+    opus = thinking adaptatif + effort medium."""
+    if "fable" in model:
+        return {"betas": ["server-side-fallback-2026-06-01"],
+                "fallbacks": [{"model": "claude-opus-4-8"}],
+                "output_config": {"effort": "low"}}
+    if "haiku" in model:
+        return {}
+    return {"thinking": {"type": "adaptive"},
+            "output_config": {"effort": "medium"}}
+
+
+async def _create(llm: AsyncAnthropic, model: str, **kw):
+    """Appel LLM avec les parametres de la famille ; leve sur refus."""
+    extra = _llm_kwargs(model)
+    if "output_config" in kw:                 # fusion format + effort
+        kw["output_config"] = (extra.pop("output_config", {})
+                               | kw["output_config"])
+    api = llm.beta.messages if "betas" in extra else llm.messages
+    resp = await api.create(model=model, max_tokens=MAX_TOKENS,
+                            **extra, **kw)
+    if resp.stop_reason == "refusal":
+        raise RuntimeError(f"refus du modele {model}")
+    return resp
+
+
+async def _analysis(llm: AsyncAnthropic, agent: dict, sources: dict,
+                    now: datetime, models: dict) -> str:
+    """Un specialiste : ne recoit que ses sections du dossier (tokens)."""
+    dossier = build_dossier(sources, now, only=agent["sections"])
+    resp = await _create(llm, models[agent["model_key"]],
+                         system=agent["system"],
+                         messages=[{"role": "user", "content": dossier}])
     return next((b.text for b in resp.content if b.type == "text"), "").strip()
 
 
-async def run_council(llm: AsyncAnthropic, dossier: str) -> dict:
-    """Trois analyses en parallele, puis le synthetiseur (JSON par schema).
+async def run_council(llm: AsyncAnthropic, sources: dict,
+                      now: datetime) -> dict:
+    """Quatre analyses en parallele, puis le synthetiseur (JSON par schema).
 
     Toute erreur (API, reseau, refus) => meteo NEUTRE, sans lever.
     """
     try:
-        analyses = await asyncio.gather(*(_analysis(llm, a, dossier)
-                                          for a in AGENTS))
-        council = dossier + "".join(
+        models = agent_models()
+        analyses = await asyncio.gather(*(_analysis(llm, a, sources, now,
+                                                    models) for a in AGENTS))
+        council = build_dossier(sources, now) + "".join(
             f"\n\nANALYSE {a['nom'].upper()} :\n{txt}"
             for a, txt in zip(AGENTS, analyses))
-        resp = await llm.messages.create(
-            model=MODEL_REASONING, max_tokens=MAX_TOKENS,
-            system=PROMPT_SYNTH, thinking={"type": "adaptive"},
+        resp = await _create(
+            llm, models["agent_juge_synthesizer"], system=PROMPT_SYNTH,
             output_config={"format": {"type": "json_schema",
                                       "schema": SYNTH_SCHEMA}},
             messages=[{"role": "user", "content": council}])
-        if resp.stop_reason == "refusal":
-            raise RuntimeError("verdict refuse par le modele")
         verdict = json.loads(next(b.text for b in resp.content
                                   if b.type == "text"))
         verdict["confidence"] = min(1.0, max(0.0,
@@ -323,8 +369,7 @@ async def collect_and_judge(llm: AsyncAnthropic, state: dict, now: datetime):
     sources = await collect_all(
         extra_social=tuple(cfg.get("social_feeds") or ()),
         extra_bank=tuple(cfg.get("bank_feeds") or ()), now=now)
-    dossier = build_dossier(sources, now)
-    verdict = await run_council(llm, dossier)
+    verdict = await run_council(llm, sources, now)
     write_weather(verdict, now)
     state["last_collect_day"] = now.date().isoformat()
     state["report_day"] = now.date().isoformat()

@@ -33,14 +33,21 @@ VERDICT = {"weather": "ORAGEUX", "confidence": 0.85,
                        "tranche volatil"}
 
 
+SOURCES = {"geo": ["titre geo"], "social": ["titre social"],
+           "calendar": ["- 12:30 UTC [USD] CPI"], "banks": ["note GS"]}
+
+
 def _llm_response(text, stop_reason="end_turn"):
     return SimpleNamespace(stop_reason=stop_reason,
                            content=[SimpleNamespace(type="text", text=text)])
 
 
-def _llm(side_effect):
+def _llm(normal=None, beta=None):
+    """Mock a deux chemins : messages.create (haiku/opus) et
+    beta.messages.create (fable, fallback serveur)."""
     llm = mock.MagicMock()
-    llm.messages.create = mock.AsyncMock(side_effect=side_effect)
+    llm.messages.create = mock.AsyncMock(side_effect=normal)
+    llm.beta.messages.create = mock.AsyncMock(side_effect=beta)
     return llm
 
 
@@ -73,41 +80,96 @@ class TestSendWindow(unittest.TestCase):
         self.assertFalse(ma.should_send(stale, self._at(8, 30)))
 
 
+class TestModelMapping(unittest.TestCase):
+    """Decoupage fin des modeles + surcharge par configuration."""
+
+    def test_default_mapping(self):
+        self.assertEqual(ma.DEFAULT_MODELS, {
+            "agent_geopolitics": "claude-fable-5",
+            "agent_macro": "claude-fable-5",
+            "agent_sentiment": "claude-haiku-4-5",
+            "agent_flow_trader": "claude-haiku-4-5",
+            "agent_juge_synthesizer": "claude-opus-4-8"})
+
+    def test_config_overrides_one_agent(self):
+        with mock.patch.object(ma, "load_json", return_value={
+                "model_mapping": {"agent_macro": "claude-opus-4-8"}}):
+            models = ma.agent_models()
+        self.assertEqual(models["agent_macro"], "claude-opus-4-8")
+        self.assertEqual(models["agent_geopolitics"], "claude-fable-5")
+
+    def test_kwargs_per_model_family(self):
+        fable = ma._llm_kwargs("claude-fable-5")
+        self.assertNotIn("thinking", fable)          # thinking integre
+        self.assertEqual(fable["fallbacks"], [{"model": "claude-opus-4-8"}])
+        self.assertEqual(fable["output_config"], {"effort": "low"})
+        self.assertIn("server-side-fallback-2026-06-01", fable["betas"])
+        self.assertEqual(ma._llm_kwargs("claude-haiku-4-5"), {})
+        opus = ma._llm_kwargs("claude-opus-4-8")
+        self.assertEqual(opus["thinking"], {"type": "adaptive"})
+        self.assertEqual(opus["output_config"], {"effort": "medium"})
+
+
 class TestCouncil(unittest.IsolatedAsyncioTestCase):
     """Le conseil : 4 agents specialises en parallele + 1 synthetiseur."""
 
-    async def test_four_agents_then_synth(self):
-        llm = _llm([_llm_response("analyse geo"), _llm_response("analyse eco"),
-                    _llm_response("analyse sentiment"),
-                    _llm_response("analyse flux"),
-                    _llm_response(json.dumps(VERDICT))])
-        verdict = await ma.run_council(llm, "dossier")
+    async def test_four_agents_then_synth_routed_by_model(self):
+        llm = _llm(normal=[_llm_response("analyse sentiment"),
+                           _llm_response("analyse flux"),
+                           _llm_response(json.dumps(VERDICT))],
+                   beta=[_llm_response("analyse geo"),
+                         _llm_response("analyse eco")])
+        verdict = await ma.run_council(llm, SOURCES, DAY)
         self.assertEqual(verdict["weather"], "ORAGEUX")
         self.assertEqual(verdict["confidence"], 0.85)
-        self.assertEqual(llm.messages.create.await_count, 5)
-        models = [c.kwargs["model"]
+        self.assertEqual(llm.beta.messages.create.await_count, 2)  # fable
+        self.assertEqual(llm.messages.create.await_count, 3)  # haiku+juge
+        beta_models = [c.kwargs["model"]
+                       for c in llm.beta.messages.create.await_args_list]
+        self.assertEqual(beta_models, ["claude-fable-5"] * 2)
+        normal = [c.kwargs["model"]
                   for c in llm.messages.create.await_args_list]
-        self.assertEqual(models.count(ma.MODEL_SCANNER), 2)    # agents 3-4
-        self.assertEqual(models.count(ma.MODEL_REASONING), 3)  # 1, 2, synth
+        self.assertEqual(normal, ["claude-haiku-4-5", "claude-haiku-4-5",
+                                  "claude-opus-4-8"])
+        self.assertTrue(all(c.kwargs["max_tokens"] == ma.MAX_TOKENS
+                            for c in llm.messages.create.await_args_list))
+
+    async def test_sectorized_dossiers_save_tokens(self):
+        llm = _llm(normal=[_llm_response("s"), _llm_response("f"),
+                           _llm_response(json.dumps(VERDICT))],
+                   beta=[_llm_response("g"), _llm_response("m")])
+        await ma.run_council(llm, SOURCES, DAY)
+        sentiment_msg = (llm.messages.create.await_args_list[0]
+                         .kwargs["messages"][0]["content"])
+        self.assertIn("RESEAUX SOCIAUX", sentiment_msg)
+        self.assertNotIn("GEOPOLITIQUE", sentiment_msg)  # section exclue
+        self.assertNotIn("BANK DESKS", sentiment_msg)
+        judge_msg = (llm.messages.create.await_args_list[2]
+                     .kwargs["messages"][0]["content"])
+        self.assertIn("GEOPOLITIQUE", judge_msg)     # le juge voit tout
+        self.assertIn("BANK DESKS", judge_msg)
 
     async def test_api_failure_falls_back_to_neutral(self):
-        llm = _llm(RuntimeError("API indisponible"))
-        verdict = await ma.run_council(llm, "dossier")
+        llm = _llm(normal=RuntimeError("API indisponible"),
+                   beta=RuntimeError("API indisponible"))
+        verdict = await ma.run_council(llm, SOURCES, DAY)
         self.assertEqual(verdict["weather"], "NEUTRE")
         self.assertEqual(verdict["confidence"], 0.0)
 
     async def test_refusal_falls_back_to_neutral(self):
-        llm = _llm([_llm_response("a"), _llm_response("b"), _llm_response("c"),
-                    _llm_response("d"),
-                    _llm_response("", stop_reason="refusal")])
-        self.assertEqual((await ma.run_council(llm, "d"))["weather"],
+        llm = _llm(normal=[_llm_response("s"), _llm_response("f"),
+                           _llm_response("", stop_reason="refusal")],
+                   beta=[_llm_response("g"), _llm_response("m")])
+        self.assertEqual((await ma.run_council(llm, SOURCES, DAY))["weather"],
                          "NEUTRE")
 
     async def test_confidence_clamped(self):
-        llm = _llm([_llm_response("a"), _llm_response("b"), _llm_response("c"),
-                    _llm_response("d"),
-                    _llm_response(json.dumps(dict(VERDICT, confidence=7.5)))])
-        self.assertEqual((await ma.run_council(llm, "d"))["confidence"], 1.0)
+        llm = _llm(normal=[_llm_response("s"), _llm_response("f"),
+                           _llm_response(json.dumps(dict(VERDICT,
+                                                         confidence=7.5)))],
+                   beta=[_llm_response("g"), _llm_response("m")])
+        self.assertEqual((await ma.run_council(llm, SOURCES,
+                                               DAY))["confidence"], 1.0)
 
 
 class TestWeatherFile(unittest.TestCase):
