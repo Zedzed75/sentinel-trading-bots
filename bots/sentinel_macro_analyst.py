@@ -15,16 +15,14 @@ macro_config.json "model_mapping" - defauts : geo/macro sur claude-fable-5
 sentiment/flux sur claude-haiku-4-5, juge sur claude-opus-4-8. Sobriete de
 tokens : dossiers sectorises par agent, limites de mots, MAX_TOKENS 4000.
 
-Sorties : bots/macro_weather.json ({"weather", "confidence", ...}) et le
+Sorties : macro_weather.json (statut instantane), macro_history.json
+(archive quotidienne compacte pour la validation statistique) et le
 rapport Telegram. INFORMATIF : aucun sizing modifie tant que le filtre
-macro n'est pas backteste (docs/AMELIORATION_CONTINUE.md, roadmap 4).
-Repli : toute panne (reseau, API LLM, flux) ecrit une meteo NEUTRE et se
-logge sans jamais tuer le processus.
+macro n'est pas backteste (roadmap 4). Repli : toute panne ecrit une
+meteo NEUTRE sans jamais tuer le processus.
 
-Config : bots/macro_config.json {"anthropic_api_key": "...",
-"social_feeds": [urls RSS premium optionnelles]} (gitignore, voir
-macro_config.example.json) ou ANTHROPIC_API_KEY. `--once` : pipeline
-immediat puis exit.
+Config : bots/macro_config.json (gitignore, voir l'exemple) ou
+ANTHROPIC_API_KEY. `--once` : pipeline immediat puis exit.
 """
 
 import asyncio
@@ -39,19 +37,14 @@ from anthropic import AsyncAnthropic
 
 from sentinel_macro_sources import build_dossier, collect_all
 
-# ----------------------------------------------------------------------------
-# Configuration
-# ----------------------------------------------------------------------------
+# --- Configuration ---
 COLLECT_HOUR = 8              # 08:00 UTC : ingestion + conseil LLM
 SEND_HOUR, SEND_MINUTE = 8, 30  # 08:30 UTC : envoi Telegram
 POLL_SECONDS = 30
 
 # Modeles par agent, surchargeables via macro_config.json "model_mapping"
-# (memes cles). fable-5 : raisonnement maximal pour geo/macro, thinking
-# integre au modele, repli serveur vers opus-4-8 si un classifieur refuse
-# (sujets sanctions/conflits) ; haiku-4-5 : scanners a cout minimal ;
-# opus-4-8 : le juge (sortie structuree). Sobriete de tokens : effort low
-# sur les agents fable, plafond dur MAX_TOKENS, dossiers sectorises.
+# (memes cles) : fable-5 = raisonnement geo/macro (effort low, fallback
+# serveur opus sur refus), haiku-4-5 = scanners, opus-4-8 = juge.
 DEFAULT_MODELS = {
     "agent_geopolitics": "claude-fable-5",
     "agent_macro": "claude-fable-5",
@@ -59,12 +52,12 @@ DEFAULT_MODELS = {
     "agent_flow_trader": "claude-haiku-4-5",
     "agent_juge_synthesizer": "claude-opus-4-8",
 }
-MAX_TOKENS = 4000             # plafond dur par appel (theses courtes)
-FETCH_TIMEOUT = 20.0
+MAX_TOKENS, FETCH_TIMEOUT = 4000, 20.0  # plafond dur par appel ; timeout
 
 _DIR = os.path.dirname(os.path.abspath(__file__))
 LOG_DIR = os.path.join(os.path.dirname(_DIR), "logs")
 WEATHER_FILE = os.path.join(_DIR, "macro_weather.json")
+HISTORY_FILE = os.path.join(_DIR, "macro_history.json")
 STATE_FILE = os.path.join(_DIR, "macro_state.json")
 CONFIG_FILE = os.path.join(_DIR, "macro_config.json")
 TELEGRAM_CONFIG = os.path.join(_DIR, "telegram_config.json")
@@ -86,7 +79,6 @@ WEATHER_META = {
                "\U0001f7e1 Regime normal, pas de biais"),
 }
 
-# Le conseil : trois agents specialises, roles systeme distincts.
 AGENTS = (
     {"cle": "geo", "nom": "Geopolitique",
      "model_key": "agent_geopolitics", "sections": ("calendar", "geo"),
@@ -141,10 +133,13 @@ PROMPT_SYNTH = (
     "entre 0 et 1, le focus principal du jour (annonce ou theme, heure UTC "
     "si connue), un resume d'une phrase de chaque analyse, une ligne "
     "'cibles bancaires' (banque + niveau si le dossier en donne, sinon "
-    "'aucune cible publiee') et le CONFLIT D'INTERET DU JOUR : le "
+    "'aucune cible publiee'), le CONFLIT D'INTERET DU JOUR : le "
     "desaccord le plus significatif entre deux analystes et comment tu le "
-    "tranches (ou 'aucun conflit notable'). Reponds en francais, "
-    "chaque champ en une seule phrase dense.")
+    "tranches (ou 'aucun conflit notable'), et primary_asset : l'actif de "
+    "la flotte le plus concerne par le focus du jour (AUCUN si aucun ne "
+    "domine). Reponds en francais, chaque champ en une seule phrase dense.")
+
+FLEET_ASSETS = ("XAUUSD", "XTIUSD", "XBRUSD", "EURUSD", "GBPUSD", "US500", "AUCUN")
 
 SYNTH_SCHEMA = {
     "type": "object",
@@ -157,10 +152,11 @@ SYNTH_SCHEMA = {
         "sentiment_resume": {"type": "string"},
         "banks_resume": {"type": "string"},
         "conflict": {"type": "string"},
+        "primary_asset": {"type": "string", "enum": list(FLEET_ASSETS)},
     },
     "required": ["weather", "confidence", "focus", "geo_resume",
                  "macro_resume", "sentiment_resume", "banks_resume",
-                 "conflict"],
+                 "conflict", "primary_asset"],
     "additionalProperties": False,
 }
 
@@ -169,13 +165,11 @@ NEUTRAL_FALLBACK = {
     "focus": "indisponible (repli automatique)",
     "geo_resume": "indisponible", "macro_resume": "indisponible",
     "sentiment_resume": "indisponible", "banks_resume": "indisponible",
-    "conflict": "indisponible",
+    "conflict": "indisponible", "primary_asset": "AUCUN",
 }
 
 
-# ----------------------------------------------------------------------------
-# Etat, fenetres horaires et fichiers (fonctions pures, testables)
-# ----------------------------------------------------------------------------
+# --- Etat, fenetres horaires et fichiers (fonctions pures, testables) ---
 def load_json(path: str) -> dict:
     try:
         with open(path, encoding="utf-8") as fh:
@@ -233,14 +227,36 @@ def write_weather(verdict: dict, now: datetime, path: str | None = None):
         "sentiment_resume": verdict.get("sentiment_resume", ""),
         "banks_resume": verdict.get("banks_resume", ""),
         "conflict": verdict.get("conflict", ""),
+        "primary_asset": verdict.get("primary_asset", "AUCUN"),
         "date": now.date().isoformat(),
         "generated_at": now.isoformat(),
     })
 
 
-# ----------------------------------------------------------------------------
-# Le conseil multi-agents (4 specialistes en parallele, puis le synthetiseur)
-# ----------------------------------------------------------------------------
+def append_history(verdict: dict, now: datetime, path: str | None = None):
+    """Archive quotidienne (tableau trie par date, upsert du jour) pour
+    la validation statistique ; ne leve JAMAIS (E/S non bloquante)."""
+    try:
+        hist = []
+        try:
+            with open(path or HISTORY_FILE, encoding="utf-8") as fh:
+                data = json.load(fh)
+            hist = data if isinstance(data, list) else []
+        except (OSError, ValueError):
+            pass                                  # fichier absent : cree
+        today = now.date().isoformat()
+        hist = [e for e in hist if e.get("date") != today]
+        hist.append({"date": today, "weather": verdict["weather"],
+                     "confidence": round(float(verdict["confidence"]), 2),
+                     "focus": verdict["focus"],
+                     "primary_asset": verdict.get("primary_asset", "AUCUN")})
+        hist.sort(key=lambda e: e.get("date", ""))
+        save_json_atomic(path or HISTORY_FILE, hist)
+    except Exception as exc:
+        log.warning("Archivage meteo KO (%s) : rapport non bloque.", exc)
+
+
+# --- Le conseil multi-agents (4 specialistes en parallele, puis le synthetiseur) ---
 def agent_models() -> dict:
     """Mapping effectif : defauts + surcharges de macro_config.json."""
     return DEFAULT_MODELS | (load_json(CONFIG_FILE).get("model_mapping")
@@ -248,10 +264,8 @@ def agent_models() -> dict:
 
 
 def _llm_kwargs(model: str) -> dict:
-    """Parametres imposes par la famille de modele (regles API) :
-    fable-5 = thinking toujours actif (parametre omis) + effort low +
-    fallback serveur vers opus ; haiku 4.5 = ni adaptatif ni effort ;
-    opus = thinking adaptatif + effort medium."""
+    """Regles API par famille : fable = thinking integre + effort low +
+    fallback opus ; haiku = ni adaptatif ni effort ; opus = adaptatif."""
     if "fable" in model:
         return {"betas": ["server-side-fallback-2026-06-01"],
                 "fallbacks": [{"model": "claude-opus-4-8"}],
@@ -338,9 +352,7 @@ def format_report(verdict: dict, now: datetime) -> str:
             f"macro n'est pas backteste - AMELIORATION_CONTINUE.md)")
 
 
-# ----------------------------------------------------------------------------
-# Telegram (reutilise les credentials du projet, jamais commites)
-# ----------------------------------------------------------------------------
+# --- Telegram (reutilise les credentials du projet, jamais commites) ---
 async def send_telegram(text: str) -> bool:
     token = (load_json(TELEGRAM_CONFIG).get("token")
              or os.environ.get("TELEGRAM_BOT_TOKEN"))
@@ -360,9 +372,7 @@ async def send_telegram(text: str) -> bool:
         return False
 
 
-# ----------------------------------------------------------------------------
-# Cycle principal
-# ----------------------------------------------------------------------------
+# --- Cycle principal ---
 async def collect_and_judge(llm: AsyncAnthropic, state: dict, now: datetime):
     """08:00 : sources -> conseil -> macro_weather.json + rapport en attente."""
     cfg = load_json(CONFIG_FILE)
@@ -371,6 +381,7 @@ async def collect_and_judge(llm: AsyncAnthropic, state: dict, now: datetime):
         extra_bank=tuple(cfg.get("bank_feeds") or ()), now=now)
     verdict = await run_council(llm, sources, now)
     write_weather(verdict, now)
+    append_history(verdict, now)
     state["last_collect_day"] = now.date().isoformat()
     state["report_day"] = now.date().isoformat()
     state["report"] = format_report(verdict, now)

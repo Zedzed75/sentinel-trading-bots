@@ -30,7 +30,8 @@ VERDICT = {"weather": "ORAGEUX", "confidence": 0.85,
            "sentiment_resume": "declarations tarifaires agressives",
            "banks_resume": "JPMorgan biais acheteur XAUUSD vise 4200",
            "conflict": "geo hausse petrole vs desk GS capitulation : "
-                       "tranche volatil"}
+                       "tranche volatil",
+           "primary_asset": "XTIUSD"}
 
 
 SOURCES = {"geo": ["titre geo"], "social": ["titre social"],
@@ -192,6 +193,8 @@ class TestWeatherFile(unittest.TestCase):
                                    os.path.join(tmp, "w.json")), \
                  mock.patch.object(ma, "STATE_FILE",
                                    os.path.join(tmp, "s.json")), \
+                 mock.patch.object(ma, "HISTORY_FILE",
+                                   os.path.join(tmp, "h.json")), \
                  mock.patch.object(ma, "collect_all", mock.AsyncMock(
                      return_value={"geo": [], "social": [], "calendar": [],
                                    "banks": []})):
@@ -202,6 +205,57 @@ class TestWeatherFile(unittest.TestCase):
         data = asyncio.run(scenario())          # ne doit jamais lever
         self.assertEqual(data["weather"], "NEUTRE")
         self.assertEqual(data["confidence"], 0.0)
+
+
+class TestHistory(unittest.TestCase):
+    """Archive macro_history.json : creation, upsert du jour, tri, E/S."""
+
+    def setUp(self):
+        self.path = os.path.join(tempfile.mkdtemp(), "macro_history.json")
+
+    def _read(self):
+        with open(self.path, encoding="utf-8") as fh:
+            return json.load(fh)
+
+    def test_created_with_compact_entry(self):
+        ma.append_history(VERDICT, DAY, self.path)   # fichier absent : cree
+        hist = self._read()
+        self.assertEqual(hist, [{"date": "2026-07-16",
+                                 "weather": "ORAGEUX", "confidence": 0.85,
+                                 "focus": "CPI US a 14:30 UTC",
+                                 "primary_asset": "XTIUSD"}])
+
+    def test_same_day_rerun_updates_without_duplicate(self):
+        ma.append_history(VERDICT, DAY, self.path)
+        ma.append_history(dict(VERDICT, weather="CALME", confidence=0.5),
+                          DAY, self.path)            # relance le meme jour
+        hist = self._read()
+        self.assertEqual(len(hist), 1)
+        self.assertEqual(hist[0]["weather"], "CALME")
+
+    def test_sorted_by_date(self):
+        ma.append_history(VERDICT, DAY, self.path)
+        ma.append_history(dict(VERDICT, weather="CALME"),
+                          DAY.replace(day=14), self.path)  # jour anterieur
+        self.assertEqual([e["date"] for e in self._read()],
+                         ["2026-07-14", "2026-07-16"])
+
+    def test_io_error_never_raises(self):
+        # chemin invalide (dossier) : loggue et continue, ne leve jamais
+        ma.append_history(VERDICT, DAY, tempfile.mkdtemp())
+
+    def test_corrupt_history_recreated(self):
+        with open(self.path, "w", encoding="utf-8") as fh:
+            fh.write("{pas un tableau")
+        ma.append_history(VERDICT, DAY, self.path)
+        self.assertEqual(len(self._read()), 1)
+
+    def test_primary_asset_constrained_to_fleet(self):
+        enum = ma.SYNTH_SCHEMA["properties"]["primary_asset"]["enum"]
+        self.assertIn("XAUUSD", enum)
+        self.assertIn("AUCUN", enum)
+        self.assertIn("primary_asset", ma.SYNTH_SCHEMA["required"])
+        self.assertEqual(ma.NEUTRAL_FALLBACK["primary_asset"], "AUCUN")
 
 
 class TestSources(unittest.TestCase):

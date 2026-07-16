@@ -16,6 +16,7 @@ dashboard_config.json
 macro_config.json
 macro_weather.json
 macro_state.json
+macro_history.json
 
 # Logs runtime
 logs/
