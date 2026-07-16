@@ -12,6 +12,11 @@ telegram_state.json
 # Secrets du dashboard web (Basic Auth)
 dashboard_config.json
 
+# Bot 7 : cle API Anthropic (secret), meteo et etat runtime
+macro_config.json
+macro_weather.json
+macro_state.json
+
 # Logs runtime
 logs/
 

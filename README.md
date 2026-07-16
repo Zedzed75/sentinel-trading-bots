@@ -6,9 +6,9 @@ independants, concus en TDD. Compte demo recommande.
 ## Structure
 
 ```
-bots/     les 6 bots (sans imports croises) + sentinel_signals.py
-          (fonctions pures du bot 1)
-tests/    les 9 suites de tests (176 tests, MT5 mocke)
+bots/     les 7 bots (sans imports croises) + modules purs
+          (sentinel_signals.py bot 1, sentinel_macro_sources.py bot 7)
+tests/    les 10 suites de tests (194 tests, MT5 mocke)
 docs/     ARCHITECTURE.md (le code), STRATEGIE.md (l'investissement),
           AMELIORATION_CONTINUE.md (mesure et correction des strategies)
 research/ backtest_sentinel.py (rejoue les regles des bots sur
@@ -25,6 +25,7 @@ sentinel_dashboard.py + templates/  dashboard web mobile (lecture seule)
 | `sentinel_trend.py` | Suivi de tendance (time-series momentum) : cassure Donchian 55 H4, sortie canal 20 oppose, sur XAUUSD, EURUSD, GBPUSD, US500, XTIUSD | 1% de l'equite/trade (0.5% sur EURUSD/GBPUSD/XTIUSD depuis le 2026-07-15, cf. AMELIORATION_CONTINUE.md), SL dur 2xATR(14), pas de TP | -15% du pic d'equite historique, verrou permanent |
 | `sentinel_risk_orchestrator.py` | Ne trade pas : vol targeting 10% annualise (ecrit `risk_scale.json`, applique par tous les bots), alerte de concentration directionnelle | reduit les tailles quand la vol du compte monte (plancher 0.25) | -10% GLOBAL du pic d'equite : ferme toute la flotte (magics Sentinel uniquement), verrou permanent |
 | `sentinel_trade_analytics.py` | Ne trade pas : reconstitue les trades fermes depuis l'historique MT5 (magics Sentinel) et publie `logs/trades.csv` + `logs/analytics.html` (win rate, profit factor, expectancy, max DD par strategie/symbole sur 7j/30j/total, plus la ventilation par heure d'ouverture UTC) | aucun (lecture seule) | aucun |
+| `sentinel_macro_analyst.py` | Ne trade pas, ne touche pas a MT5 : "meteo du marche" quotidienne multi-agents — ingere a 08h00 UTC trois familles de sources (geopolitique/energie avec surveillance des goulots type Ormuz/mer Rouge, declarations d'influenceurs filtrees par actifs, calendrier economique), plus les notes sell-side des bank desks (GS, JPM, MS, Citi via FT/FXStreet/Google News), reunit un conseil de 4 agents LLM specialises (Geo, Macro, Sentiment, Stratege de flux - API Anthropic, opus + haiku) tranche par un synthetiseur (JSON structure), ecrit `bots/macro_weather.json` et envoie le rapport Telegram a 08h30 UTC. Informatif : aucun sizing modifie (roadmap 4). Repli NEUTRE automatique sur toute panne | aucun (lecture seule) | aucun |
 | `sentinel_telegram.py` | Ne trade pas : notifications Telegram (ouvertures, clotures avec PnL, coupe-circuits, rapport quotidien 18h UTC avec rappel des couples suspendus/reduits et de leur echeance de reevaluation) et commandes `/status` (equite, positions, verrous avec echeance, fenetres d'entree ouvertes/fermees par strategie, processus) et `/pnl` (gains/pertes jour/7j/30j/total par strategie) | aucun (lecture seule) | aucun |
 
 ## Utilisation
@@ -37,7 +38,15 @@ python bots/sentinel_alpha_compound.py      # bot 2 (spread Brent/WTI)
 python bots/sentinel_trend.py               # bot 3 (trend-following H4)
 python bots/sentinel_trade_analytics.py     # bot 5 (analyse des trades)
 python bots/sentinel_telegram.py            # bot 6 (notifications mobile)
+python bots/sentinel_macro_analyst.py       # bot 7 (meteo macro quotidienne)
 ```
+
+### Meteo macro (bot 7)
+
+Copier `bots/macro_config.example.json` vers `bots/macro_config.json`
+(gitignore) et y mettre une cle API Anthropic (ou definir
+`ANTHROPIC_API_KEY`). Test manuel : `python bots/sentinel_macro_analyst.py
+--once` (pipeline immediat + envoi). Sans cle, le bot attend passivement.
 
 ### Dashboard mobile (sentinel_dashboard.py)
 
@@ -87,7 +96,7 @@ bot 1 pour les tests en direct ; laisser a `False` en production.
 
 ## Tests
 
-176 tests, MT5, yfinance et psutil mockes (executables sans terminal) :
+194 tests, MT5, yfinance, psutil et LLM mockes (executables sans terminal) :
 
 ```
 python -m unittest discover -s tests -v
