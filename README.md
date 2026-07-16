@@ -8,7 +8,7 @@ independants, concus en TDD. Compte demo recommande.
 ```
 bots/     les 7 bots (sans imports croises) + modules purs
           (sentinel_signals.py bot 1, sentinel_macro_sources.py bot 7)
-tests/    les 10 suites de tests (194 tests, MT5 mocke)
+tests/    les 10 suites de tests (201 tests, MT5 mocke)
 docs/     ARCHITECTURE.md (le code), STRATEGIE.md (l'investissement),
           AMELIORATION_CONTINUE.md (mesure et correction des strategies)
 research/ backtest_sentinel.py (rejoue les regles des bots sur
@@ -50,10 +50,16 @@ Copier `bots/macro_config.example.json` vers `bots/macro_config.json`
 
 ### Dashboard mobile (sentinel_dashboard.py)
 
-Page web responsive (FastAPI + DaisyUI, rafraichie toutes les 10 s,
-lecture seule) : balance/equite/marge (alerte sous 150% de niveau de
-marge), statut et PnL du jour de chaque bot, jauge du coupe-circuit
-journalier -4%, verrou global, positions ouvertes, CPU/RAM/watchdog.
+Page web mobile-first (FastAPI + Jinja2 + DaisyUI/HTMX via CDN, theme
+forest, fragment live rafraichi toutes les 10 s) : header meteo dynamique
+du bot 7 (rouge ORAGEUX / vert CALME / gris NEUTRE + confiance + focus),
+onglets Debat/Bank Targets/Conflit, balance/equite/marge (alerte < 150%),
+statut RUNNING/STOPPED et PnL du jour des 7 bots, jauge du coupe-circuit
+-4%, positions ouvertes, CPU/RAM/watchdog. Deux actions protegees par
+confirmation : 🚨 PANIC (ferme toutes les positions Sentinel et pose le
+verrou GLOBAL — deverrouillage humain) et 🔄 FORCE RUN bot 7 (meteo
+immediate). Fichiers absents/corrompus => squelettes gris, jamais de 500.
+Test local sans MT5 : `python sentinel_dashboard.py --mock`.
 
 1. Copier `dashboard_config.example.json` vers `dashboard_config.json`
    (gitignore) et definir un mot de passe fort : le serveur refuse de
@@ -96,7 +102,7 @@ bot 1 pour les tests en direct ; laisser a `False` en production.
 
 ## Tests
 
-194 tests, MT5, yfinance, psutil et LLM mockes (executables sans terminal) :
+201 tests, MT5, yfinance, psutil et LLM mockes (executables sans terminal) :
 
 ```
 python -m unittest discover -s tests -v

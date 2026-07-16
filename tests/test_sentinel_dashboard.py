@@ -5,6 +5,7 @@ Garantie centrale : un JSON absent, vide ou corrompu ne fait jamais
 planter l'interface (build_state repond toujours).
 """
 
+import json
 import os
 import sys
 import tempfile
@@ -135,6 +136,98 @@ class TestGaugeAndAccount(unittest.TestCase):
         self.assertEqual(len(pos), 1)
         self.assertEqual(pos[0]["sens"], "LONG")
         self.assertEqual(pos[0]["strategie"], "breakout")
+
+
+class TestWeather(unittest.TestCase):
+    """Meteo du bot 7 : lecture robuste + drapeau stale."""
+
+    def test_read_weather_missing_or_corrupt_is_none(self):
+        with mock.patch.object(dash, "BOTS_DIR", tempfile.mkdtemp()):
+            self.assertIsNone(dash.read_weather(NOW))
+
+    def test_read_weather_valid_and_stale_flag(self):
+        d = tempfile.mkdtemp()
+        with open(os.path.join(d, "macro_weather.json"), "w",
+                  encoding="utf-8") as fh:
+            json.dump({"weather": "ORAGEUX", "confidence": 0.76,
+                       "focus": "CPI", "date": "2026-07-15"}, fh)
+        with mock.patch.object(dash, "BOTS_DIR", d):
+            w = dash.read_weather(NOW)                # NOW = 2026-07-15
+            self.assertEqual(w["weather"], "ORAGEUX")
+            self.assertFalse(w["stale"])
+            w2 = dash.read_weather(NOW + timedelta(days=3))
+            self.assertTrue(w2["stale"])              # meteo d'un autre jour
+
+    def test_build_state_includes_meteo_none_as_skeleton(self):
+        fake_mt5.account_info.return_value = None
+        fake_mt5.positions_get.return_value = None
+        with mock.patch.object(dash, "BOTS_DIR", tempfile.mkdtemp()), \
+             mock.patch.object(dash, "LOG_DIR", tempfile.mkdtemp()), \
+             mock.patch.object(dash, "TRADES_CSV", "introuvable.csv"):
+            self.assertIsNone(dash.build_state(NOW)["meteo"])
+
+
+class TestActions(unittest.TestCase):
+    """PANIC (close all + verrou global) et FORCE RUN bot 7."""
+
+    def setUp(self):
+        self.client = TestClient(dash.app)
+        self.tmp = tempfile.mkdtemp()
+        self.auth = ("sentinel", "bon")
+        self.creds = mock.patch.object(dash, "_credentials",
+                                       return_value=self.auth)
+        self.creds.start()
+        self.addCleanup(self.creds.stop)
+
+    def test_actions_require_auth(self):
+        self.assertEqual(self.client.post("/api/panic").status_code, 401)
+        self.assertEqual(self.client.post("/api/forcerun").status_code, 401)
+
+    def test_panic_closes_positions_and_locks(self):
+        fake_mt5.positions_get.return_value = [
+            SimpleNamespace(ticket=1, symbol="XAUUSD", type=0, volume=0.1,
+                            profit=0.0, magic=1001),
+            SimpleNamespace(ticket=2, symbol="EURUSD", type=1, volume=1.0,
+                            profit=0.0, magic=777),          # etranger
+        ]
+        fake_mt5.symbol_info_tick.return_value = SimpleNamespace(
+            ask=4100.0, bid=4099.5)
+        fake_mt5.order_send.return_value = SimpleNamespace(retcode=10009)
+        fake_mt5.TRADE_RETCODE_DONE = 10009
+        with mock.patch.object(dash, "BOTS_DIR", self.tmp), \
+             mock.patch.object(dash.psutil, "process_iter",
+                               return_value=[]):
+            r = self.client.post("/api/panic", auth=self.auth)
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("1 position(s) fermee(s)", r.text)
+        lock = dash.load_json(os.path.join(self.tmp,
+                                           "orchestrator_state.json"))
+        self.assertTrue(lock["locked"])               # verrou global pose
+
+    def test_forcerun_spawns_bot7_once(self):
+        with mock.patch.object(dash.subprocess, "Popen") as popen:
+            r = self.client.post("/api/forcerun", auth=self.auth)
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("Bot 7", r.text)
+        args = popen.call_args[0][0]
+        self.assertIn("sentinel_macro_analyst.py", args)
+        self.assertIn("--once", args)
+
+
+class TestMockMode(unittest.TestCase):
+    """--mock : donnees fictives sans MT5, actions desactivees."""
+
+    def test_mock_state_and_disabled_actions(self):
+        client = TestClient(dash.app)
+        with mock.patch.object(dash, "MOCK", True), \
+             mock.patch.object(dash, "_credentials",
+                               return_value=("sentinel", "bon")):
+            state = dash.build_state()
+            self.assertIn("MOCK", state["heure"])
+            self.assertEqual(len(state["bots"]), 7)
+            self.assertEqual(state["meteo"]["weather"], "ORAGEUX")
+            r = client.post("/api/panic", auth=("sentinel", "bon"))
+        self.assertIn("mode mock", r.text)
 
 
 class TestAuth(unittest.TestCase):
