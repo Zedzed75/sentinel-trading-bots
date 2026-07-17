@@ -1,17 +1,17 @@
-"""SENTINEL RISK ORCHESTRATOR - Superviseur de risque du portefeuille de bots.
+"""SENTINEL RISK ORCHESTRATOR - Risk supervisor of the bot portfolio.
 
-Ne trade pas : il surveille le compte et coordonne les bots Sentinel.
+It does not trade: it monitors the account and coordinates the Sentinel bots.
 
-1. Volatility targeting (Moreira & Muir 2017) : mesure la volatilite
-   realisee de l'equite (echantillon quotidien) et ecrit dans
-   risk_scale.json un facteur [MIN_SCALE, 1] = cible/realisee que les bots
-   appliquent a leur taille de position.
-2. Concentration directionnelle : alerte si trop de positions Sentinel
-   vont dans le meme sens (les strategies deviennent un seul pari).
-3. Coupe-circuit GLOBAL : si l'equite perd GLOBAL_MAX_DD depuis son pic
-   historique, fermeture de toutes les positions des magics Sentinel
-   (celles d'autres EA/manuelles sont intouchees) et verrou permanent -
-   il continue de purger tout ce que les bots rouvriraient.
+1. Volatility targeting (Moreira & Muir 2017): measures the realized
+   volatility of equity (daily sample) and writes to risk_scale.json a
+   [MIN_SCALE, 1] factor = target/realized that the bots apply to their
+   position size.
+2. Directional concentration: alert if too many Sentinel positions go in
+   the same direction (the strategies become a single bet).
+3. GLOBAL circuit breaker: if equity loses GLOBAL_MAX_DD from its
+   historical peak, close all positions of the Sentinel magics (other
+   EAs'/manual ones are untouched) and permanent lock - it keeps purging
+   anything the bots might reopen.
 """
 
 import json
@@ -26,16 +26,16 @@ import MetaTrader5 as mt5
 # ----------------------------------------------------------------------------
 # Configuration
 # ----------------------------------------------------------------------------
-# Magics de la flotte : bot 1 (1001-3002), alpha (4001), trend (5001-5005)
+# Fleet magics: bot 1 (1001-3002), alpha (4001), trend (5001-5005)
 SENTINEL_MAGICS = ({1001, 1002, 2001, 2002, 3001, 3002, 4001}
                    | set(range(5001, 5006)))
 
-TARGET_VOL = 0.10             # volatilite cible du compte, annualisee
-VOL_WINDOW = 20               # jours de rendements pour la vol realisee
-MIN_SAMPLES = 5               # en dessous : scale neutre (1.0)
-MIN_SCALE = 0.25              # plancher du facteur (jamais couper a zero)
-GLOBAL_MAX_DD = 0.10          # verrou global a -10% du pic d'equite
-MAX_SAME_DIRECTION = 4        # alerte concentration directionnelle
+TARGET_VOL = 0.10             # target account volatility, annualized
+VOL_WINDOW = 20               # days of returns for realized vol
+MIN_SAMPLES = 5               # below that: neutral scale (1.0)
+MIN_SCALE = 0.25              # factor floor (never cut to zero)
+GLOBAL_MAX_DD = 0.10          # global lock at -10% of the equity peak
+MAX_SAME_DIRECTION = 4        # directional concentration alert
 
 DEVIATION = 20
 _DIR = os.path.dirname(os.path.abspath(__file__))
@@ -46,7 +46,7 @@ log = logging.getLogger("orchestrator")
 
 
 def save_json_atomic(path: str, payload: dict):
-    """Temporaire + os.replace : l'etat precedent survit a un crash."""
+    """Temp file + os.replace: the previous state survives a crash."""
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as fh:
         json.dump(payload, fh)
@@ -59,7 +59,7 @@ HEARTBEAT_FILE = os.path.join(os.path.dirname(_DIR), "logs",
 
 def write_heartbeat(path: str = HEARTBEAT_FILE,
                     now: datetime | None = None):
-    """Estampille de vie apres chaque cycle reussi (lue par le watchdog)."""
+    """Liveness timestamp after each successful cycle (read by the watchdog)."""
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w", encoding="utf-8") as fh:
@@ -69,7 +69,7 @@ def write_heartbeat(path: str = HEARTBEAT_FILE,
 
 
 def vol_scale(realized_vol: float, target: float = TARGET_VOL) -> float:
-    """Facteur de reduction cible/realisee, borne a [MIN_SCALE, 1]."""
+    """Target/realized reduction factor, clamped to [MIN_SCALE, 1]."""
     if realized_vol <= 0:
         return 1.0
     return float(min(1.0, max(MIN_SCALE, target / realized_vol)))
@@ -81,14 +81,14 @@ def write_risk_scale(scale: float, path: str | None = None):
                          {"scale": round(scale, 4),
                           "updated": datetime.now(timezone.utc).isoformat()})
     except OSError as exc:
-        log.warning("Echec ecriture risk_scale : %s", exc)
+        log.warning("risk_scale write failed: %s", exc)
 
 
 # ----------------------------------------------------------------------------
-# Suivi d'equite et volatilite realisee
+# Equity tracking and realized volatility
 # ----------------------------------------------------------------------------
 class EquityMonitor:
-    """Un echantillon d'equite par jour UTC, persiste ; vol annualisee."""
+    """One equity sample per UTC day, persisted; annualized vol."""
 
     def __init__(self, state_file: str = STATE_FILE):
         self.state_file = state_file
@@ -110,18 +110,18 @@ class EquityMonitor:
                              {"history": self.history[-90:],
                               "peak": self.peak, "locked": self.locked})
         except OSError as exc:
-            log.warning("Echec sauvegarde etat : %s", exc)
+            log.warning("State save failed: %s", exc)
 
     def snapshot(self, now: datetime, equity: float):
-        """Enregistre l'equite du jour (premier passage du jour UTC)."""
+        """Record today's equity (first pass of the UTC day)."""
         day = now.date().isoformat()
         if not self.history or self.history[-1]["day"] != day:
             self.history.append({"day": day, "equity": float(equity)})
             self._save()
-            log.info("Snapshot equite %s : %.2f", day, equity)
+            log.info("Equity snapshot %s: %.2f", day, equity)
 
     def realized_vol(self) -> float | None:
-        """Volatilite annualisee des rendements quotidiens ; None si trop court."""
+        """Annualized volatility of daily returns; None if too short."""
         eq = [h["equity"] for h in self.history[-(VOL_WINDOW + 1):]]
         if len(eq) < MIN_SAMPLES + 1:
             return None
@@ -129,7 +129,7 @@ class EquityMonitor:
         return float(np.std(rets, ddof=1) * np.sqrt(252))
 
     def check_drawdown(self, equity: float) -> bool:
-        """True si le verrou global est (ou devient) actif."""
+        """True if the global lock is (or becomes) active."""
         if self.locked:
             return True
         if equity > self.peak:
@@ -138,15 +138,15 @@ class EquityMonitor:
         elif self.peak > 0 and equity <= self.peak * (1 - GLOBAL_MAX_DD):
             self.locked = True
             self._save()
-            log.critical("VERROU GLOBAL : equite %.2f <= -%.0f%% du pic %.2f. "
-                         "Fermeture de toute la flotte Sentinel.",
+            log.critical("GLOBAL LOCK: equity %.2f <= -%.0f%% of peak %.2f. "
+                         "Closing the whole Sentinel fleet.",
                          equity, GLOBAL_MAX_DD * 100, self.peak)
             return True
         return False
 
 
 # ----------------------------------------------------------------------------
-# Surveillance des positions de la flotte
+# Fleet position monitoring
 # ----------------------------------------------------------------------------
 def sentinel_positions() -> list:
     return [p for p in (mt5.positions_get() or [])
@@ -154,7 +154,7 @@ def sentinel_positions() -> list:
 
 
 def direction_concentration(positions: list) -> tuple[int, int]:
-    """(nb achats, nb ventes) parmi les positions de la flotte."""
+    """(buy count, sell count) among the fleet's positions."""
     buys = sum(1 for p in positions if p.type == mt5.POSITION_TYPE_BUY)
     return buys, len(positions) - buys
 
@@ -176,54 +176,55 @@ def close_position(pos) -> bool:
 
 
 def kill_fleet():
-    """Ferme toutes les positions des magics Sentinel (les autres restent)."""
+    """Close all positions of the Sentinel magics (others are kept)."""
     for pos in sentinel_positions():
         if close_position(pos):
-            log.warning("Position %s (%s, magic=%s) fermee par le verrou.",
+            log.warning("Position %s (%s, magic=%s) closed by the lock.",
                         pos.ticket, pos.symbol, pos.magic)
 
 
 # ----------------------------------------------------------------------------
-# Boucle principale
+# Main loop
 # ----------------------------------------------------------------------------
 def run_cycle(monitor: EquityMonitor, now: datetime | None = None):
     now = now or datetime.now(timezone.utc)
     acc = mt5.account_info()
     if acc is None:
-        raise ConnectionError(f"account_info() KO : {mt5.last_error()}")
+        raise ConnectionError(f"account_info() KO: {mt5.last_error()}")
 
-    # 1. verrou global : purge la flotte tant qu'il est actif
+    # 1. global lock: purge the fleet while it is active
     if monitor.check_drawdown(acc.equity):
         kill_fleet()
-        write_risk_scale(MIN_SCALE)       # ceinture + bretelles
+        write_risk_scale(MIN_SCALE)       # belt and braces
         return
 
     monitor.snapshot(now, acc.equity)
 
-    # 2. volatility targeting -> facteur d'echelle partage
+    # 2. volatility targeting -> shared scale factor
     rvol = monitor.realized_vol()
     scale = 1.0 if rvol is None else vol_scale(rvol)
     write_risk_scale(scale)
     if rvol is not None and scale < 1.0:
-        log.info("Vol realisee %.1f%% > cible %.0f%% -> scale=%.2f",
+        log.info("Realized vol %.1f%% > target %.0f%% -> scale=%.2f",
                  rvol * 100, TARGET_VOL * 100, scale)
 
-    # 3. concentration directionnelle de la flotte
+    # 3. directional concentration of the fleet
     buys, sells = direction_concentration(sentinel_positions())
     if max(buys, sells) >= MAX_SAME_DIRECTION:
-        log.warning("CONCENTRATION : %s achats / %s ventes Sentinel dans le "
-                    "meme sens - les strategies sont correlees.", buys, sells)
+        log.warning("CONCENTRATION: %s buys / %s sells Sentinel in the "
+                    "same direction - the strategies are correlated.",
+                    buys, sells)
 
 
 def main():
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S")
-    log.info("Demarrage SENTINEL RISK ORCHESTRATOR (cible vol %.0f%%, "
-             "DD global %.0f%%)", TARGET_VOL * 100, GLOBAL_MAX_DD * 100)
+    log.info("Starting SENTINEL RISK ORCHESTRATOR (vol target %.0f%%, "
+             "global DD %.0f%%)", TARGET_VOL * 100, GLOBAL_MAX_DD * 100)
     if not mt5.initialize(
             path="C:/Program Files/Pepperstone MetaTrader 5/terminal64.exe"):
-        log.error("mt5.initialize() a echoue : %s", mt5.last_error())
+        log.error("mt5.initialize() failed: %s", mt5.last_error())
         return 1
     monitor = EquityMonitor()
     while True:
@@ -231,12 +232,12 @@ def main():
             run_cycle(monitor)
             write_heartbeat()
         except ConnectionError as exc:
-            log.error("Connexion perdue : %s - reconnexion...", exc)
+            log.error("Connection lost: %s - reconnecting...", exc)
             mt5.shutdown()
             time.sleep(5)
             mt5.initialize()
         except Exception as exc:
-            log.exception("Erreur inattendue : %s", exc)
+            log.exception("Unexpected error: %s", exc)
         time.sleep(5)
 
 

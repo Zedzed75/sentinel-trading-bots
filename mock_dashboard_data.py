@@ -1,8 +1,8 @@
-"""Donnees fictives pour tester l'affichage du dashboard sans VPS ni MT5.
+"""Fake data to test the dashboard display without a VPS or MT5.
 
-Usage :  python sentinel_dashboard.py --mock  (ou SENTINEL_DASHBOARD_MOCK=1)
-Le serveur sert alors cet etat statique : aucun acces MT5, psutil ni
-fichiers de la flotte ; les boutons d'action repondent "mode mock".
+Usage:  python sentinel_dashboard.py --mock  (or SENTINEL_DASHBOARD_MOCK=1)
+The server then serves this static state: no MT5, psutil or fleet-file
+access; the action buttons answer "mock mode".
 """
 
 from datetime import datetime, timezone
@@ -11,55 +11,53 @@ from datetime import datetime, timezone
 def get_state() -> dict:
     now = datetime.now(timezone.utc)
     return {
-        "heure": now.strftime("%Y-%m-%d %H:%M:%S UTC") + " (MOCK)",
-        "compte": {"ok": True, "balance": 10250.00, "equity": 10187.42,
-                   "margin_free": 9414.10, "margin_level": 512.3,
-                   "currency": "EUR"},
-        "marge_alerte": False,
-        "meteo": {
-            "weather": "ORAGEUX", "confidence": 0.76,
-            "focus": "CPI US a 14:30 UTC - catalyseur intraday dominant",
-            "geo_resume": "Prime de risque sur le Brent : escalade en mer "
-                          "Rouge et menaces sur Ormuz.",
-            "macro_resume": "Le CPI decidera de la trajectoire de la Fed ; "
-                            "le dollar est vulnerable a une surprise basse.",
-            "sentiment_resume": "Declarations tarifaires agressives : "
-                                "risque de gap a l'ouverture US.",
-            "banks_resume": "JPMorgan maintient un biais acheteur XAUUSD "
-                            "vise 4200 ; Goldman voit un Brent a 95 fin "
-                            "d'annee.",
-            "conflict": "Le geopolitique craint un choc petrolier haussier "
-                        "mais le desk GS voit une capitulation des "
-                        "acheteurs : le juge tranche ORAGEUX en privilegiant "
-                        "la volatilite plutot que la direction.",
+        "time": now.strftime("%Y-%m-%d %H:%M:%S UTC") + " (MOCK)",
+        "account": {"ok": True, "balance": 10250.00, "equity": 10187.42,
+                    "margin_free": 9414.10, "margin_level": 512.3,
+                    "currency": "EUR"},
+        "margin_alert": False,
+        "weather": {
+            "weather": "STORMY", "confidence": 0.76,
+            "focus": "US CPI at 14:30 UTC - dominant intraday catalyst",
+            "geo_summary": "Risk premium on Brent: escalation in the Red "
+                           "Sea and threats on Hormuz.",
+            "macro_summary": "The CPI will decide the Fed's trajectory; "
+                             "the dollar is vulnerable to a low surprise.",
+            "sentiment_summary": "Aggressive tariff statements: gap risk "
+                                 "at the US open.",
+            "banks_summary": "JPMorgan keeps a bullish bias XAUUSD targets "
+                             "4200; Goldman sees Brent at 95 by year-end.",
+            "conflict": "Geopolitics fears a bullish oil shock but the GS "
+                        "desk sees buyer capitulation: the judge settles "
+                        "STORMY, favouring volatility over direction.",
             "date": now.date().isoformat(),
         },
         "bots": [
-            {"id": 1, "nom": "Intraday multi-actifs", "statut": "actif",
-             "pnl_jour": -401.02, "trades_jour": 5, "trade": True},
-            {"id": 2, "nom": "Stat-arb Brent/WTI", "statut": "actif",
-             "pnl_jour": 86.40, "trades_jour": 1, "trade": True},
-            {"id": 3, "nom": "Trend-following H4", "statut": "actif",
-             "pnl_jour": 0.0, "trades_jour": 0, "trade": True},
-            {"id": 4, "nom": "Orchestrateur", "statut": "actif",
-             "pnl_jour": 0, "trades_jour": 0, "trade": False},
-            {"id": 5, "nom": "Analytics", "statut": "fige",
-             "pnl_jour": 0, "trades_jour": 0, "trade": False},
-            {"id": 6, "nom": "Telegram", "statut": "arrete",
-             "pnl_jour": 0, "trades_jour": 0, "trade": False},
-            {"id": 7, "nom": "Macro Analyst", "statut": "actif",
-             "pnl_jour": 0, "trades_jour": 0, "trade": False},
+            {"id": 1, "name": "Intraday multi-asset", "status": "active",
+             "day_pnl": -401.02, "day_trades": 5, "trade": True},
+            {"id": 2, "name": "Stat-arb Brent/WTI", "status": "active",
+             "day_pnl": 86.40, "day_trades": 1, "trade": True},
+            {"id": 3, "name": "Trend-following H4", "status": "active",
+             "day_pnl": 0.0, "day_trades": 0, "trade": True},
+            {"id": 4, "name": "Orchestrator", "status": "active",
+             "day_pnl": 0, "day_trades": 0, "trade": False},
+            {"id": 5, "name": "Analytics", "status": "frozen",
+             "day_pnl": 0, "day_trades": 0, "trade": False},
+            {"id": 6, "name": "Telegram", "status": "stopped",
+             "day_pnl": 0, "day_trades": 0, "trade": False},
+            {"id": 7, "name": "Macro Analyst", "status": "active",
+             "day_pnl": 0, "day_trades": 0, "trade": False},
         ],
-        "jauge_jour": {"pct": -1.92, "used": 0.48, "limit_pct": -4.0},
-        "verrou_global": False,
+        "daily_gauge": {"pct": -1.92, "used": 0.48, "limit_pct": -4.0},
+        "global_lock": False,
         "risk_scale": 1.0,
         "positions": [
-            {"ticket": 79512345, "symbol": "SpotBrent", "sens": "LONG",
-             "volume": 0.5, "pnl": 42.17, "strategie": "statarb"},
-            {"ticket": 79512346, "symbol": "SpotCrude", "sens": "SHORT",
-             "volume": 0.55, "pnl": 44.23, "strategie": "statarb"},
-            {"ticket": 79512399, "symbol": "XAUUSD", "sens": "LONG",
-             "volume": 0.11, "pnl": -12.50, "strategie": "breakout"},
+            {"ticket": 79512345, "symbol": "SpotBrent", "side": "LONG",
+             "volume": 0.5, "pnl": 42.17, "strategy": "statarb"},
+            {"ticket": 79512346, "symbol": "SpotCrude", "side": "SHORT",
+             "volume": 0.55, "pnl": 44.23, "strategy": "statarb"},
+            {"ticket": 79512399, "symbol": "XAUUSD", "side": "LONG",
+             "volume": 0.11, "pnl": -12.50, "strategy": "breakout"},
         ],
-        "systeme": {"cpu": 17.0, "ram": 47.0, "watchdog": True},
+        "system": {"cpu": 17.0, "ram": 47.0, "watchdog": True},
     }

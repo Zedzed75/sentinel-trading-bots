@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="fr" data-theme="forest">
+<html lang="en" data-theme="forest">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -15,55 +15,55 @@
     <h1 class="text-xl font-bold tracking-wide">🛡️ SENTINEL <span class="text-xs opacity-50 font-normal">v1.0.0{% if mock %} · MOCK{% endif %}</span></h1>
   </div>
 
-  <!-- Fragment live : rafraichi par HTMX toutes les 10 s -->
+  <!-- Live fragment: refreshed by HTMX every 10 s -->
   <div id="live" hx-get="partial/live" hx-trigger="every 10s" hx-swap="innerHTML">
     {% include "_live.html" %}
   </div>
 
-  <!-- C. Debat & Insights (bot 7) — statique : change une fois par jour -->
-  {% set W = state.meteo %}
+  <!-- C. Debate & Insights (bot 7) — static: changes once per day -->
+  {% set W = state.weather %}
   <div class="card bg-base-100 shadow">
     <div class="card-body py-4">
-      <h2 class="card-title text-base">🧠 Débat &amp; Insights (Bot 7)</h2>
+      <h2 class="card-title text-base">🧠 Debate &amp; Insights (Bot 7)</h2>
       {% if W %}
       <div role="tablist" class="tabs tabs-lifted">
-        <input type="radio" name="insights" role="tab" class="tab whitespace-nowrap" aria-label="⚖️ Le Choc des Thèses" checked>
+        <input type="radio" name="insights" role="tab" class="tab whitespace-nowrap" aria-label="⚖️ Clash of Theses" checked>
         <div role="tabpanel" class="tab-content bg-base-100 border-base-300 rounded-box p-4 space-y-3 text-sm">
-          <div class="chat chat-start"><div class="chat-bubble chat-bubble-info">🌍 <b>Géopolitique :</b> {{ W.geo_resume or "—" }}</div></div>
-          <div class="chat chat-end"><div class="chat-bubble chat-bubble-secondary">🏦 <b>Macro :</b> {{ W.macro_resume or "—" }}</div></div>
-          <div class="chat chat-start"><div class="chat-bubble chat-bubble-accent">📣 <b>Sentiment :</b> {{ W.sentiment_resume or "—" }}</div></div>
+          <div class="chat chat-start"><div class="chat-bubble chat-bubble-info">🌍 <b>Geopolitics:</b> {{ W.geo_summary or "—" }}</div></div>
+          <div class="chat chat-end"><div class="chat-bubble chat-bubble-secondary">🏦 <b>Macro:</b> {{ W.macro_summary or "—" }}</div></div>
+          <div class="chat chat-start"><div class="chat-bubble chat-bubble-accent">📣 <b>Sentiment:</b> {{ W.sentiment_summary or "—" }}</div></div>
         </div>
         <input type="radio" name="insights" role="tab" class="tab" aria-label="💼 Bank Targets">
         <div role="tabpanel" class="tab-content bg-base-100 border-base-300 rounded-box p-4 text-sm">
-          {{ W.banks_resume or "aucune cible publiée" }}
+          {{ W.banks_summary or "no published target" }}
         </div>
-        <input type="radio" name="insights" role="tab" class="tab" aria-label="🎯 Conflit">
+        <input type="radio" name="insights" role="tab" class="tab" aria-label="🎯 Conflict">
         <div role="tabpanel" class="tab-content bg-base-100 border-base-300 rounded-box p-4 text-sm italic">
-          {{ W.conflict or "aucun conflit notable" }}
+          {{ W.conflict or "no notable conflict" }}
         </div>
       </div>
       {% else %}
       <div class="space-y-2">
         <div class="skeleton h-4 w-full"></div>
         <div class="skeleton h-4 w-2/3"></div>
-        <p class="text-xs opacity-50">météo indisponible — le bot 7 publiera à 08h00 UTC (ou FORCE RUN ci-dessous)</p>
+        <p class="text-xs opacity-50">weather unavailable — bot 7 publishes at 08:00 UTC (or FORCE RUN below)</p>
       </div>
       {% endif %}
     </div>
   </div>
 
-  <!-- D. Panel de controle d'urgence -->
+  <!-- D. Emergency control panel -->
   <div class="card bg-base-100 shadow border border-error/30">
     <div class="card-body py-4 space-y-3">
-      <h2 class="card-title text-base">🕹️ Contrôle d'urgence</h2>
+      <h2 class="card-title text-base">🕹️ Emergency controls</h2>
       <button class="btn btn-error btn-block shadow-lg shadow-error/40"
               hx-post="api/panic" hx-target="#action-result" hx-swap="innerHTML"
-              hx-confirm="⚠️ FERMER TOUTES LES POSITIONS et verrouiller la flotte (déverrouillage manuel) — confirmer ?">
+              hx-confirm="⚠️ CLOSE ALL POSITIONS and lock the fleet (manual unlock) — confirm?">
         🚨 PANIC : CLOSE ALL
       </button>
       <button class="btn btn-info btn-block shadow-lg shadow-info/40"
               hx-post="api/forcerun" hx-target="#action-result" hx-swap="innerHTML"
-              hx-confirm="Lancer le pipeline météo du Bot 7 maintenant ?">
+              hx-confirm="Run Bot 7's weather pipeline now?">
         🔄 FORCE RUN : BOT 7
       </button>
       <div id="action-result" class="text-sm min-h-5"></div>

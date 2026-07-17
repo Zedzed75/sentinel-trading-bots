@@ -1,6 +1,6 @@
-"""Tests du moteur de backtest (donnees synthetiques, sans MT5).
+"""Backtest engine tests (synthetic data, no MT5).
 
-Executer :  python -m unittest test_backtest_sentinel -v
+Run:  python -m unittest test_backtest_sentinel -v
 """
 
 import os
@@ -27,17 +27,17 @@ def make_df(closes, start=None, step_h=4, spread=0.5):
 
 class TestTrendEngine(unittest.TestCase):
     def test_long_entry_and_channel_exit_r(self):
-        # plat, cassure haussiere, montee, puis chute sous le canal de sortie
+        # flat, bullish breakout, climb, then drop below the exit channel
         closes = [100.0] * 60 + [103.0] + [104.0 + i for i in range(10)] \
             + [95.0]
         trades = bt.backtest_trend(make_df(closes), entry_ch=55, exit_ch=5,
                                    atr_mult=2.0)
         self.assertEqual(len(trades), 1)
         self.assertEqual(trades[0]["dir"], 1)
-        self.assertLess(trades[0]["r"], 0)     # sortie 95 sous l'entree 103
+        self.assertLess(trades[0]["r"], 0)     # exit 95 below the 103 entry
 
     def test_stop_intrabar_gives_minus_one_r(self):
-        # cassure puis bougie qui touche le stop : perte exactement -1R
+        # breakout then a candle that touches the stop: loss of exactly -1R
         closes = [100.0] * 60 + [103.0] + [80.0]
         trades = bt.backtest_trend(make_df(closes), entry_ch=55, exit_ch=5)
         self.assertEqual(len(trades), 1)
@@ -51,8 +51,8 @@ class TestTrendEngine(unittest.TestCase):
 class TestBreakoutEngine(unittest.TestCase):
     @staticmethod
     def _day(prices_by_hour, day=6):
-        """Bougies M30 d'une nuit asiatique 22h->08h plate a 100 puis
-        la journee du 2026-01-<day+1> aux prix donnes {heure: close}."""
+        """M30 candles of a flat Asian night 22h->08h at 100 then the
+        2026-01-<day+1> day at the given prices {hour: close}."""
         rows = []
         t = datetime(2026, 1, day, 22, 0, tzinfo=UTC)
         while t.hour != 8 or t.minute != 0:
@@ -68,24 +68,24 @@ class TestBreakoutEngine(unittest.TestCase):
         return pd.DataFrame(rows)
 
     def test_breakout_in_window_takes_trade(self):
-        df = self._day({9: 102.0, 10: 102.0})     # cassure a 09h (fenetre 8-16)
+        df = self._day({9: 102.0, 10: 102.0})     # breakout at 09h (window 8-16)
         trades = bt.backtest_breakout(df, hour_start=8, hour_end=16)
         self.assertGreaterEqual(len(trades), 1)
         self.assertEqual(trades[0]["dir"], 1)
 
     def test_breakout_outside_window_ignored(self):
-        df = self._day({19: 102.0, 20: 102.0})    # cassure a 19h seulement
+        df = self._day({19: 102.0, 20: 102.0})    # breakout at 19h only
         trades = bt.backtest_breakout(df, hour_start=8, hour_end=16)
         self.assertEqual(trades, [])
 
     def test_full_stop_is_minus_one_r(self):
-        # cassure a 9h puis effondrement : stop plein a -1R
+        # breakout at 9h then collapse: full stop at -1R
         df = self._day({9: 102.0, 10: 80.0, 11: 80.0})
         trades = bt.backtest_breakout(df, hour_start=8, hour_end=16)
         self.assertEqual(trades[0]["r"], -1.0)
 
     def test_partial_then_breakeven_gives_half_r(self):
-        # 9h : cassure ; 10h : > 1R (partiel+BE) ; 11h : retour a l'entree
+        # 9h: breakout; 10h: > 1R (partial+BE); 11h: back to the entry
         df = self._day({9: 102.0, 10: 104.0, 11: 101.0, 12: 101.0})
         trades = bt.backtest_breakout(df, hour_start=8, hour_end=16,
                                       sl_mult=1.5)
@@ -94,11 +94,11 @@ class TestBreakoutEngine(unittest.TestCase):
 
 
 class TestStatarbEngine(unittest.TestCase):
-    """Paire cointegree synthetique : a = 5 + 1.2*b + e (e stationnaire)."""
+    """Synthetic cointegrated pair: a = 5 + 1.2*b + e (e stationary)."""
 
     @staticmethod
     def make_pair(e, seed=42):
-        """DataFrame M15 aligne ; e = serie du bruit stationnaire du spread."""
+        """Aligned M15 DataFrame; e = stationary spread noise series."""
         n = len(e)
         rng = np.random.default_rng(seed)
         b = 60 + np.cumsum(rng.normal(0, 0.2, n))
@@ -109,12 +109,12 @@ class TestStatarbEngine(unittest.TestCase):
 
     @staticmethod
     def base_noise(n):
-        """Bruit uniforme borne +/-0.07 (sigma ~ 0.04) : |z| du bruit seul
-        reste < 2 (aucune entree parasite) et l'ADF rejette H0 nettement."""
+        """Uniform noise bounded +/-0.07 (sigma ~ 0.04): |z| of the noise
+        alone stays < 2 (no spurious entry) and the ADF clearly rejects H0."""
         return np.random.default_rng(3).uniform(-0.07, 0.07, n)
 
     def test_buy_spread_converges_positive_r(self):
-        # ecartement a ~ -3 sigma sur 2 bougies puis retour a la moyenne
+        # widening to ~ -3 sigma over 2 candles then mean reversion
         e = self.base_noise(360)
         e[300:302] = -0.12
         trades = bt.backtest_statarb(self.make_pair(e), hour_start=0,
@@ -125,9 +125,9 @@ class TestStatarbEngine(unittest.TestCase):
         self.assertGreater(trades[0]["r"], 0)
 
     def test_z_stop_gives_negative_r(self):
-        # entree a ~ -3 sigma puis ecartement au-dela de 4 sigma
-        # (une seule bougie ecartee : |z| repasse sous 2 apres la sortie,
-        # sinon le moteur re-entre, comme le bot)
+        # entry at ~ -3 sigma then widening beyond 4 sigma
+        # (a single widened candle: |z| falls back under 2 after the exit,
+        # otherwise the engine re-enters, like the bot)
         e = self.base_noise(360)
         e[300] = -0.12
         e[301] = -0.30
@@ -138,8 +138,8 @@ class TestStatarbEngine(unittest.TestCase):
         self.assertLess(trades[0]["r"], 0)
 
     def test_time_stop_after_max_bars(self):
-        # le spread reste ecarte sans converger ni exploser, puis revient
-        # a la moyenne juste apres le stop temporel (pas de re-entree)
+        # the spread stays wide without converging or exploding, then
+        # reverts to the mean just after the time stop (no re-entry)
         e = self.base_noise(360)
         e[300:309] = -0.12
         trades = bt.backtest_statarb(self.make_pair(e), max_bars=8,
@@ -149,7 +149,7 @@ class TestStatarbEngine(unittest.TestCase):
         self.assertEqual(trades[0]["bars"], 8)
 
     def test_no_entry_outside_hours(self):
-        # meme ecartement, mais a 03:00 UTC : fenetre 07-20h fermee
+        # same widening, but at 03:00 UTC: 07-20h window closed
         e = self.base_noise(360)
         e[300:302] = -0.12                  # bar 300 = +75h -> 03:00 UTC
         trades = bt.backtest_statarb(self.make_pair(e),
@@ -157,7 +157,7 @@ class TestStatarbEngine(unittest.TestCase):
         self.assertEqual(trades, [])
 
     def test_no_entry_without_cointegration(self):
-        # marches aleatoires independants : l'ADF ne valide jamais l'entree
+        # independent random walks: the ADF never validates the entry
         rng = np.random.default_rng(7)
         n = 360
         times = pd.date_range("2026-01-05 00:00", periods=n, freq="15min",

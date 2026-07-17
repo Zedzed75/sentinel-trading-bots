@@ -1,6 +1,6 @@
-"""Tests SENTINEL ALPHA COMPOUND (MT5 mocke, statsmodels reel).
+"""SENTINEL ALPHA COMPOUND tests (MT5 mocked, real statsmodels).
 
-Executer :  python -m unittest test_sentinel_alpha_compound -v
+Run:  python -m unittest test_sentinel_alpha_compound -v
 """
 
 import os
@@ -53,23 +53,23 @@ class TestKelly(unittest.TestCase):
     def test_kelly_fraction_formula(self):
         self.assertAlmostEqual(sa.kelly_fraction(0.6, 2.0), 0.4)   # W-(1-W)/R
         self.assertAlmostEqual(sa.kelly_fraction(0.5, 1.0), 0.0)
-        self.assertEqual(sa.kelly_fraction(0.4, 1.0), 0.0)         # borne a 0
-        self.assertEqual(sa.kelly_fraction(0.9, 0.0), 0.0)         # R invalide
+        self.assertEqual(sa.kelly_fraction(0.4, 1.0), 0.0)         # floored at 0
+        self.assertEqual(sa.kelly_fraction(0.9, 0.0), 0.0)         # invalid R
 
     def test_default_risk_until_enough_history(self):
         self.state.trades = [100.0] * (sa.MIN_TRADES_FOR_KELLY - 1)
         self.assertEqual(self.sizer.risk_fraction(), sa.DEFAULT_RISK)
 
     def test_half_kelly_capped(self):
-        # 6 gains de 200, 4 pertes de 100 : W=0.6, R=2 -> K=0.4, half=0.2
+        # 6 wins of 200, 4 losses of 100: W=0.6, R=2 -> K=0.4, half=0.2
         self.state.trades = [200.0] * 6 + [-100.0] * 4
         self.assertAlmostEqual(self.sizer.win_rate, 0.6)
         self.assertAlmostEqual(self.sizer.rr_ratio, 2.0)
         self.assertEqual(self.sizer.risk_fraction(), sa.MAX_RISK)  # 0.2 -> cap
 
     def test_half_kelly_below_cap(self):
-        # 5 gains de 120, 5 pertes de 100 : W=0.5, R=1.2
-        # K = 0.5 - 0.5/1.2 = 0.0833 ; half = 0.0417 < MAX_RISK
+        # 5 wins of 120, 5 losses of 100: W=0.5, R=1.2
+        # K = 0.5 - 0.5/1.2 = 0.0833; half = 0.0417 < MAX_RISK
         self.state.trades = [120.0] * 5 + [-100.0] * 5
         self.assertAlmostEqual(self.sizer.risk_fraction(), 0.5 / 12, places=6)
 
@@ -85,7 +85,7 @@ class TestKelly(unittest.TestCase):
 
 
 class TestCompounding(unittest.TestCase):
-    """Preuve du calcul dynamique des lots sur l'equite (effet compound)."""
+    """Proof of dynamic lot sizing on equity (compounding effect)."""
 
     def setUp(self):
         self.state, self.path = temp_state()
@@ -96,15 +96,15 @@ class TestCompounding(unittest.TestCase):
                         and os.unlink(self.path))
 
     def test_lot_proportional_to_equity(self):
-        # risque par defaut 1% : SL spread = 4*0.5 = 2.0 -> 2$/lot
+        # default risk 1%: spread SL = 4*0.5 = 2.0 -> $2/lot
         lot_a1, _ = self.sizer.lots_for_spread(10000, self.analysis, SYM, SYM)
         lot_a2, _ = self.sizer.lots_for_spread(20000, self.analysis, SYM, SYM)
-        self.assertEqual(lot_a1, 25.0)   # (10000*0.01/2) / 2$ par lot
-        self.assertEqual(lot_a2, 50.0)   # equite doublee -> lot double
+        self.assertEqual(lot_a1, 25.0)   # (10000*0.01/2) / $2 per lot
+        self.assertEqual(lot_a2, 50.0)   # doubled equity -> doubled lot
 
     def test_lots_grow_with_simulated_gain_streak(self):
-        # serie de gains/pertes : l'historique alimente Kelly et l'equite
-        # croissante augmente mecaniquement la taille des positions
+        # win/loss streak: history feeds Kelly and the growing equity
+        # mechanically increases position size
         for pnl in [120, 120, -100, 120, 120, -100, 120, 120, -100, 120]:
             self.sizer.record(float(pnl))
         self.assertGreaterEqual(len(self.state.trades),
@@ -113,7 +113,7 @@ class TestCompounding(unittest.TestCase):
         lots = [self.sizer.lots_for_spread(eq, self.analysis, SYM, SYM)[0]
                 for eq in equities]
         self.assertTrue(all(a < b for a, b in zip(lots, lots[1:])),
-                        f"lots non croissants : {lots}")
+                        f"lots not increasing: {lots}")
 
     def test_leg_b_scaled_by_hedge_ratio(self):
         analysis = dict(self.analysis, beta=2.0)
@@ -161,7 +161,7 @@ class TestCointegration(unittest.TestCase):
                          "SELL_SPREAD")
         self.assertIsNone(self.engine.entry_signal(dict(base, z=1.9)))
         self.assertIsNone(self.engine.entry_signal(
-            dict(base, z=3.0, coint=False)))     # pas de coint -> pas d'entree
+            dict(base, z=3.0, coint=False)))     # no coint -> no entry
         self.assertIsNone(self.engine.entry_signal(None))
 
     def test_exit_reasons(self):
@@ -181,11 +181,11 @@ class TestDrawdownGuard(unittest.TestCase):
                         and os.unlink(self.path))
 
     def test_peak_tracking_and_lock(self):
-        self.assertFalse(self.guard.check(10000))   # nouveau pic
-        self.assertFalse(self.guard.check(12000))   # pic releve
-        self.assertFalse(self.guard.check(10300))   # -14.2% : ok
-        self.assertTrue(self.guard.check(10200))    # -15% du pic 12000
-        self.assertTrue(self.guard.check(13000))    # verrou permanent
+        self.assertFalse(self.guard.check(10000))   # new peak
+        self.assertFalse(self.guard.check(12000))   # peak raised
+        self.assertFalse(self.guard.check(10300))   # -14.2%: ok
+        self.assertTrue(self.guard.check(10200))    # -15% of peak 12000
+        self.assertTrue(self.guard.check(13000))    # permanent lock
 
     def test_lock_survives_restart(self):
         self.guard.check(10000)
@@ -226,8 +226,8 @@ class TestExecution(unittest.TestCase):
         self.assertEqual(len(reqs), 2)
         leg_a = next(r for r in reqs if r["symbol"] == "XBRUSD.p")
         leg_b = next(r for r in reqs if r["symbol"] == "XTIUSD.p")
-        self.assertEqual(leg_a["type"], fake_mt5.ORDER_TYPE_BUY)   # achat A
-        self.assertEqual(leg_b["type"], fake_mt5.ORDER_TYPE_SELL)  # vente B
+        self.assertEqual(leg_a["type"], fake_mt5.ORDER_TYPE_BUY)   # buy A
+        self.assertEqual(leg_b["type"], fake_mt5.ORDER_TYPE_SELL)  # sell B
         self.assertEqual(leg_a["sl"], 78.0)    # ask 80 - 4*sigma(0.5)
         self.assertEqual(leg_b["sl"], 81.98)   # bid 79.98 + 2.0
         self.assertTrue(all(r["magic"] == sa.MAGIC_ALPHA for r in reqs))
@@ -244,11 +244,11 @@ class TestExecution(unittest.TestCase):
         fake_mt5.positions_get.return_value = [pos_a, pos_b]
         self.trader.close_spread("convergence")
         self.assertEqual(fake_mt5.order_send.call_count, 2)
-        self.assertEqual(self.state.trades, [100.0])   # PnL net enregistre
+        self.assertEqual(self.state.trades, [100.0])   # net PnL recorded
         self.assertIsNone(self.state.open)
 
     def test_orphan_leg_triggers_full_close(self):
-        # une jambe a saute sur son SL : la jambe restante doit etre purgee
+        # one leg hit its SL: the remaining leg must be purged
         self.state.open = {"direction": "BUY_SPREAD",
                            "entry_time": self.now.isoformat(),
                            "beta": 1.0, "sigma": 0.5}
@@ -272,7 +272,7 @@ class TestExecution(unittest.TestCase):
         pos_b = SimpleNamespace(ticket=2, symbol="XTIUSD.p", type=1,
                                 volume=1.0, profit=-25.0, magic=sa.MAGIC_ALPHA)
         fake_mt5.positions_get.return_value = [pos_a, pos_b]
-        # z encore ecarte (1.5) mais N bougies atteintes -> stop temporel
+        # z still wide (1.5) but N candles reached -> time stop
         self.trader.manage(dict(self.analysis, z=1.5), 10000, self.now)
         self.assertIsNone(self.state.open)
         self.assertEqual(self.state.trades, [-15.0])
@@ -287,7 +287,7 @@ class TestExecution(unittest.TestCase):
         self.assertFalse(sa.entries_allowed(d(22)))   # rollover
 
     def test_entry_blocked_outside_liquidity_window(self):
-        # signal valide a 21h UTC : aucune jambe ouverte, reevalue plus tard
+        # valid signal at 21h UTC: no leg opened, re-evaluated later
         fake_mt5.positions_get.return_value = []
         night = self.now.replace(hour=21)
         self.trader.manage(self.analysis, 10000, night)
@@ -295,7 +295,7 @@ class TestExecution(unittest.TestCase):
         self.assertIsNone(self.state.open)
 
     def test_exit_allowed_outside_entry_window(self):
-        # stop temporel atteint a 21h : la protection n'est jamais retenue
+        # time stop reached at 21h: a protection is never withheld
         night = self.now.replace(hour=21)
         entry = night - timedelta(minutes=sa.TF_MINUTES
                                   * sa.MAX_BARS_IN_TRADE)
@@ -320,7 +320,7 @@ class TestExecution(unittest.TestCase):
         sa.run_cycle(self.trader, guard, fake_mt5.TIMEFRAME_M15, now=self.now)
         self.assertTrue(self.state.locked)
         fake_mt5.copy_rates_from_pos.assert_not_called()
-        self.assertTrue(fake_mt5.order_send.called)    # jambe fermee
+        self.assertTrue(fake_mt5.order_send.called)    # leg closed
 
 
 class TestPersistence(unittest.TestCase):
@@ -334,7 +334,7 @@ class TestPersistence(unittest.TestCase):
         state.save()
         state.locked = True
         with mock.patch.object(sa.os, "replace",
-                               side_effect=OSError("disque plein")):
+                               side_effect=OSError("disk full")):
             state.save()
         again = sa.AlphaState(path)
         self.assertFalse(again.locked)

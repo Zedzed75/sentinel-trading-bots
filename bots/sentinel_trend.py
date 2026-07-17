@@ -1,16 +1,16 @@
-"""SENTINEL TREND - Bot MT5 de suivi de tendance (Time-Series Momentum).
+"""SENTINEL TREND - MT5 trend-following bot (Time-Series Momentum).
 
-Strategie type Turtle/CTA (Moskowitz-Ooi-Pedersen 2012, Hurst-Ooi-Pedersen
-2017) : entree sur cassure du canal Donchian 55 bougies H4, stop initial a
-2xATR(14), sortie sur cassure du canal oppose 20 bougies (trailing lent).
-Asymetrie positive : beaucoup de petites pertes, gains rares mais larges.
+Turtle/CTA-style strategy (Moskowitz-Ooi-Pedersen 2012, Hurst-Ooi-Pedersen
+2017): entry on a 55-candle H4 Donchian channel breakout, initial stop at
+2xATR(14), exit on the opposite 20-candle channel breakout (slow trailing).
+Positive asymmetry: many small losses, rare but large wins.
 
-Risque : 1% de l'equite par trade (dimensionnement normalise par l'ATR,
-donc vol-targeting implicite), module par le facteur d'echelle global
-ecrit par l'orchestrateur de risque (risk_scale.json).
+Risk: 1% of equity per trade (ATR-normalized sizing, hence implicit
+vol-targeting), modulated by the global scale factor written by the risk
+orchestrator (risk_scale.json).
 
-Securite : verrou permanent si l'equite perd 15% depuis son pic historique.
-Pas de fenetre horaire : les tendances se tiennent des semaines.
+Safety: permanent lock if equity loses 15% from its historical peak.
+No trading window: trends hold for weeks.
 """
 
 import json
@@ -26,11 +26,11 @@ import MetaTrader5 as mt5
 # ----------------------------------------------------------------------------
 # Configuration
 # ----------------------------------------------------------------------------
-# Portefeuille diversifie multi-classes : nom canonique -> magic + replis.
-# risk_mult : facteur applique au risque par trade de l'actif. 0.5 sur
-# EURUSD/GBPUSD/XTIUSD depuis le 2026-07-15 : backtest 2 ans negatif sur
-# toutes les variantes et les deux moities (docs/AMELIORATION_CONTINUE.md,
-# section 5) ; reevaluation prevue a 30 trades reels par actif.
+# Diversified multi-class portfolio: canonical name -> magic + fallbacks.
+# risk_mult: factor applied to the asset's per-trade risk. 0.5 on
+# EURUSD/GBPUSD/XTIUSD since 2026-07-15: 2-year backtest negative on
+# all variants and both halves (docs/AMELIORATION_CONTINUE.md,
+# section 5); re-evaluation planned at 30 real trades per asset.
 TREND_PORTFOLIO = {
     "XAUUSD": {"magic": 5001, "fallback": ["XAUUSD.p", "GOLD"],
                "risk_mult": 1.0},
@@ -43,19 +43,19 @@ TREND_PORTFOLIO = {
 }
 TREND_MAGICS = {cfg["magic"] for cfg in TREND_PORTFOLIO.values()}
 
-ENTRY_CHANNEL = 55            # Donchian d'entree (Turtle System 2)
-EXIT_CHANNEL = 20             # Donchian de sortie (trailing lent)
+ENTRY_CHANNEL = 55            # entry Donchian (Turtle System 2)
+EXIT_CHANNEL = 20             # exit Donchian (slow trailing)
 ATR_PERIOD = 14
-ATR_STOP_MULT = 2.0           # stop initial = 2 x ATR(14) H4
-RISK_PCT = 0.01               # 1% de l'equite par trade
-MAX_HISTO_DD = 0.15           # verrou permanent a -15% du pic d'equite
+ATR_STOP_MULT = 2.0           # initial stop = 2 x ATR(14) H4
+RISK_PCT = 0.01               # 1% of equity per trade
+MAX_HISTO_DD = 0.15           # permanent lock at -15% of the equity peak
 
-# Pas de fenetre de session : le momentum H4 est insensible a l'heure et
-# un filtre horaire serait du sur-ajustement. En revanche, aucune OUVERTURE
-# pendant le rollover quotidien (spreads elargis, swaps) : une cassure
-# detectee dans cette plage est reevaluee des la sortie du blackout.
-# Les sorties (canal oppose, stops) restent permises 24h/24.
-ROLLOVER_HOUR_START = 21      # blackout d'ouverture 21:00-23:00 UTC
+# No session window: H4 momentum is insensitive to the hour and a time
+# filter would be overfitting. However, no OPENING during the daily
+# rollover (widened spreads, swaps): a breakout detected in that range
+# is re-evaluated as soon as the blackout ends.
+# Exits (opposite channel, stops) remain allowed 24/7.
+ROLLOVER_HOUR_START = 21      # opening blackout 21:00-23:00 UTC
 ROLLOVER_HOUR_END = 23
 
 DEVIATION = 20
@@ -78,7 +78,7 @@ def fp(symbol: str, value: float | None) -> str:
 
 
 def read_risk_scale(path: str = RISK_SCALE_FILE) -> float:
-    """Facteur [0,1] ecrit par l'orchestrateur de risque ; 1.0 par defaut."""
+    """[0,1] factor written by the risk orchestrator; defaults to 1.0."""
     try:
         with open(path, encoding="utf-8") as fh:
             return min(1.0, max(0.0, float(json.load(fh)["scale"])))
@@ -87,7 +87,7 @@ def read_risk_scale(path: str = RISK_SCALE_FILE) -> float:
 
 
 # ----------------------------------------------------------------------------
-# Indicateurs et signaux (fonctions pures, testables)
+# Indicators and signals (pure, testable functions)
 # ----------------------------------------------------------------------------
 def atr(df: pd.DataFrame, period: int = ATR_PERIOD) -> pd.Series:
     prev = df["close"].shift()
@@ -97,13 +97,13 @@ def atr(df: pd.DataFrame, period: int = ATR_PERIOD) -> pd.Series:
 
 
 def donchian(df: pd.DataFrame, n: int) -> tuple[float, float]:
-    """(plus haut, plus bas) des n bougies PRECEDANT la bougie de signal."""
+    """(highest high, lowest low) of the n candles BEFORE the signal candle."""
     win = df.iloc[-(n + 1):-1]
     return float(win["high"].max()), float(win["low"].min())
 
 
 def entry_signal(df: pd.DataFrame, n: int = ENTRY_CHANNEL) -> str | None:
-    """BUY si la cloture casse le haut du canal n, SELL si elle casse le bas."""
+    """BUY if the close breaks the channel high, SELL if it breaks the low."""
     if len(df) < n + 1:
         return None
     hh, ll = donchian(df, n)
@@ -117,7 +117,7 @@ def entry_signal(df: pd.DataFrame, n: int = ENTRY_CHANNEL) -> str | None:
 
 def exit_signal(df: pd.DataFrame, direction: int,
                 n: int = EXIT_CHANNEL) -> bool:
-    """Sortie de tendance : cloture au-dela du canal n oppose a la position."""
+    """Trend exit: close beyond the n channel opposite to the position."""
     if len(df) < n + 1:
         return False
     hh, ll = donchian(df, n)
@@ -130,7 +130,7 @@ def exit_signal(df: pd.DataFrame, direction: int,
 def compute_lot(equity: float, sl_distance: float, tick_size: float,
                 tick_value: float, vol_min: float, vol_max: float,
                 vol_step: float, scale: float = 1.0) -> float:
-    """Volume risquant RISK_PCT de l'equite (x facteur d'echelle global)."""
+    """Volume risking RISK_PCT of equity (x global scale factor)."""
     if sl_distance <= 0 or tick_size <= 0 or tick_value <= 0:
         return 0.0
     loss_per_lot = (sl_distance / tick_size) * tick_value
@@ -142,7 +142,7 @@ def compute_lot(equity: float, sl_distance: float, tick_size: float,
 
 
 # ----------------------------------------------------------------------------
-# Verrou de drawdown historique
+# Historical drawdown lock
 # ----------------------------------------------------------------------------
 class PeakGuard:
     def __init__(self, state_file: str = STATE_FILE):
@@ -162,7 +162,7 @@ class PeakGuard:
             save_json_atomic(self.state_file,
                              {"peak": self.peak, "locked": self.locked})
         except OSError as exc:
-            log.warning("Echec sauvegarde etat : %s", exc)
+            log.warning("State save failed: %s", exc)
 
     def check(self, equity: float) -> bool:
         if self.locked:
@@ -173,18 +173,18 @@ class PeakGuard:
         elif self.peak > 0 and equity <= self.peak * (1 - MAX_HISTO_DD):
             self.locked = True
             self._save()
-            log.critical("DRAWDOWN MAX TREND : equite %.2f <= -%.0f%% du pic "
-                         "%.2f. Verrou permanent.", equity,
+            log.critical("TREND MAX DRAWDOWN: equity %.2f <= -%.0f%% of peak "
+                         "%.2f. Permanent lock.", equity,
                          MAX_HISTO_DD * 100, self.peak)
             return True
         return False
 
 
 # ----------------------------------------------------------------------------
-# Acces MT5
+# MT5 access
 # ----------------------------------------------------------------------------
 def resolve_symbols() -> dict:
-    """{nom: {"symbol", "magic"}} pour les actifs disponibles chez le broker."""
+    """{name: {"symbol", "magic"}} for assets available at the broker."""
     active = {}
     for name, cfg in TREND_PORTFOLIO.items():
         found = next((s for s in [name] + cfg["fallback"]
@@ -193,10 +193,10 @@ def resolve_symbols() -> dict:
         if found:
             active[name] = {"symbol": found, "magic": cfg["magic"],
                             "risk_mult": cfg.get("risk_mult", 1.0)}
-            log.info("Actif %s -> %s (risque x%.1f)", name, found,
+            log.info("Asset %s -> %s (risk x%.1f)", name, found,
                      active[name]["risk_mult"])
         else:
-            log.warning("Actif %s indisponible, retire : %s", name,
+            log.warning("Asset %s unavailable, removed: %s", name,
                         mt5.last_error())
     return active
 
@@ -204,7 +204,7 @@ def resolve_symbols() -> dict:
 def get_rates(symbol: str, timeframe: int, count: int) -> pd.DataFrame | None:
     rates = mt5.copy_rates_from_pos(symbol, timeframe, 0, count)
     if rates is None or len(rates) == 0:
-        log.warning("Pas de donnees %s : %s", symbol, mt5.last_error())
+        log.warning("No data for %s: %s", symbol, mt5.last_error())
         return None
     df = pd.DataFrame(rates)
     df["time"] = pd.to_datetime(df["time"], unit="s", utc=True)
@@ -214,7 +214,7 @@ def get_rates(symbol: str, timeframe: int, count: int) -> pd.DataFrame | None:
 def send_order(request: dict):
     result = mt5.order_send(request)
     if result is None or result.retcode != mt5.TRADE_RETCODE_DONE:
-        log.error("Ordre refuse : %s / %s",
+        log.error("Order rejected: %s / %s",
                   getattr(result, "retcode", None), mt5.last_error())
         return None
     return result
@@ -222,7 +222,7 @@ def send_order(request: dict):
 
 def open_trend_trade(symbol: str, direction: str, magic: int,
                      df: pd.DataFrame, risk_mult: float = 1.0) -> bool:
-    """Entree au marche, SL dur a 2xATR, sans TP (sortie par canal)."""
+    """Market entry, hard SL at 2xATR, no TP (channel exit)."""
     acc = mt5.account_info()
     sym = mt5.symbol_info(symbol)
     tick = mt5.symbol_info_tick(symbol)
@@ -235,7 +235,7 @@ def open_trend_trade(symbol: str, direction: str, magic: int,
                       sym.trade_tick_value, sym.volume_min, sym.volume_max,
                       sym.volume_step, read_risk_scale() * risk_mult)
     if lot <= 0:
-        log.warning("[%s] lot nul, entree ignoree.", symbol)
+        log.warning("[%s] zero lot, entry skipped.", symbol)
         return False
     buy = direction == "BUY"
     price = tick.ask if buy else tick.bid
@@ -274,10 +274,10 @@ def positions_for(symbol: str, magic: int) -> list:
 
 
 # ----------------------------------------------------------------------------
-# Boucle principale
+# Main loop
 # ----------------------------------------------------------------------------
 def save_json_atomic(path: str, payload: dict):
-    """Temporaire + os.replace : l'etat precedent survit a un crash."""
+    """Temp file + os.replace: the previous state survives a crash."""
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as fh:
         json.dump(payload, fh)
@@ -290,7 +290,7 @@ HEARTBEAT_FILE = os.path.join(os.path.dirname(_DIR), "logs",
 
 def write_heartbeat(path: str = HEARTBEAT_FILE,
                     now: datetime | None = None):
-    """Estampille de vie apres chaque cycle reussi (lue par le watchdog)."""
+    """Liveness timestamp after each successful cycle (read by the watchdog)."""
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w", encoding="utf-8") as fh:
@@ -300,19 +300,19 @@ def write_heartbeat(path: str = HEARTBEAT_FILE,
 
 
 def entry_allowed(now: datetime) -> bool:
-    """False pendant le blackout de rollover (ouvertures uniquement)."""
+    """False during the rollover blackout (openings only)."""
     return not (ROLLOVER_HOUR_START <= now.hour < ROLLOVER_HOUR_END)
 
 
 def scan_symbol(name: str, cfg: dict, timeframe: int, last_bars: dict,
                 now: datetime | None = None):
-    """Sur nouvelle bougie cloturee : gere la sortie ou cherche une entree."""
+    """On a new closed candle: manage the exit or look for an entry."""
     now = now or datetime.now(timezone.utc)
     symbol, magic = cfg["symbol"], cfg["magic"]
     df = get_rates(symbol, timeframe, ENTRY_CHANNEL + 3)
     if df is None or len(df) < ENTRY_CHANNEL + 2:
         return
-    closed = df.iloc[:-1]                 # derniere ligne = bougie en cours
+    closed = df.iloc[:-1]                 # last row = candle in progress
     bar_time = closed["time"].iloc[-1]
     if last_bars.get(name) == bar_time:
         return
@@ -323,17 +323,17 @@ def scan_symbol(name: str, cfg: dict, timeframe: int, last_bars: dict,
         for pos in open_pos:
             if exit_signal(closed, pos.type):
                 if close_position(pos):
-                    log.info("[TREND] sortie canal %s ticket=%s profit=%.2f",
+                    log.info("[TREND] channel exit %s ticket=%s profit=%.2f",
                              name, pos.ticket, pos.profit)
         return
     sig = entry_signal(closed)
     if sig:
         if not entry_allowed(now):
-            last_bars.pop(name, None)   # reevaluer la bougie apres le blackout
-            log.info("[TREND] cassure %s differee (rollover %02d-%02dh UTC)",
+            last_bars.pop(name, None)   # re-evaluate the candle after blackout
+            log.info("[TREND] breakout %s deferred (rollover %02d-%02dh UTC)",
                      name, ROLLOVER_HOUR_START, ROLLOVER_HOUR_END)
             return
-        log.info("[TREND] cassure Donchian %s %s", ENTRY_CHANNEL, name)
+        log.info("[TREND] Donchian %s breakout %s", ENTRY_CHANNEL, name)
         open_trend_trade(symbol, sig, magic, closed,
                          cfg.get("risk_mult", 1.0))
 
@@ -341,7 +341,7 @@ def scan_symbol(name: str, cfg: dict, timeframe: int, last_bars: dict,
 def close_all_trend():
     for pos in mt5.positions_get() or []:
         if pos.magic in TREND_MAGICS and close_position(pos):
-            log.info("Verrou : position %s (%s) fermee.", pos.ticket,
+            log.info("Lock: position %s (%s) closed.", pos.ticket,
                      pos.symbol)
 
 
@@ -350,7 +350,7 @@ def run_cycle(active: dict, guard: PeakGuard, timeframe: int,
     now = now or datetime.now(timezone.utc)
     acc = mt5.account_info()
     if acc is None:
-        raise ConnectionError(f"account_info() KO : {mt5.last_error()}")
+        raise ConnectionError(f"account_info() KO: {mt5.last_error()}")
     if guard.check(acc.equity):
         close_all_trend()
         return
@@ -362,11 +362,11 @@ def main():
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S")
-    log.info("Demarrage SENTINEL TREND (Donchian %s/%s, H4)",
+    log.info("Starting SENTINEL TREND (Donchian %s/%s, H4)",
              ENTRY_CHANNEL, EXIT_CHANNEL)
     if not mt5.initialize(
             path="C:/Program Files/Pepperstone MetaTrader 5/terminal64.exe"):
-        log.error("mt5.initialize() a echoue : %s", mt5.last_error())
+        log.error("mt5.initialize() failed: %s", mt5.last_error())
         return 1
     active = resolve_symbols()
     if not active:
@@ -380,12 +380,12 @@ def main():
             run_cycle(active, guard, timeframe, last_bars)
             write_heartbeat()
         except ConnectionError as exc:
-            log.error("Connexion perdue : %s - reconnexion...", exc)
+            log.error("Connection lost: %s - reconnecting...", exc)
             mt5.shutdown()
             time.sleep(5)
             mt5.initialize()
         except Exception as exc:
-            log.exception("Erreur inattendue : %s", exc)
+            log.exception("Unexpected error: %s", exc)
         time.sleep(1)
 
 

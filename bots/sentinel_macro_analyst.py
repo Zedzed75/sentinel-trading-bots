@@ -1,28 +1,29 @@
-"""SENTINEL MACRO ANALYST (bot 7) - Boussole macro-economique multi-agents.
+"""SENTINEL MACRO ANALYST (bot 7) - Multi-agent macro-economic compass.
 
-Ne trade pas et ne touche pas a MT5. Chaque matin :
-- 08:00 UTC : ingere les trois familles de sources (geopolitique/energie,
-  influenceurs/reseaux sociaux, calendrier macro - voir
-  sentinel_macro_sources.py) puis reunit un CONSEIL de trois agents LLM
-  specialises et asynchrones (Geopolitique, Macro & banques centrales,
-  Sentiment/reseaux sociaux), tranche par un SYNTHETISEUR
-  (sortie JSON structuree garantie par schema).
-- 08:30 UTC : publie la "Meteo du Marche" sur le canal Telegram existant.
+Does not trade and never touches MT5. Every morning:
+- 08:00 UTC: ingests the three source families (geopolitics/energy,
+  influencers/social media, macro calendar - see
+  sentinel_macro_sources.py) then convenes a COUNCIL of specialized,
+  asynchronous LLM agents (Geopolitics, Macro & central banks,
+  Sentiment/social media), decided by a SYNTHESIZER
+  (structured JSON output guaranteed by schema).
+- 08:30 UTC: publishes the "Market Weather" on the existing Telegram
+  channel.
 
-Modeles (API Anthropic) : mapping fin par agent, surchargeable via
-macro_config.json "model_mapping" - defauts : geo/macro sur claude-fable-5
-(effort low + fallback serveur opus en cas de refus classifieur),
-sentiment/flux sur claude-haiku-4-5, juge sur claude-opus-4-8. Sobriete de
-tokens : dossiers sectorises par agent, limites de mots, MAX_TOKENS 4000.
+Models (Anthropic API): fine-grained mapping per agent, overridable via
+macro_config.json "model_mapping" - defaults: geo/macro on claude-fable-5
+(low effort + server-side opus fallback on classifier refusal),
+sentiment/flow on claude-haiku-4-5, judge on claude-opus-4-8. Token
+economy: per-agent sectorized dossiers, word limits, MAX_TOKENS 4000.
 
-Sorties : macro_weather.json (statut instantane), macro_history.json
-(archive quotidienne compacte pour la validation statistique) et le
-rapport Telegram. INFORMATIF : aucun sizing modifie tant que le filtre
-macro n'est pas backteste (roadmap 4). Repli : toute panne ecrit une
-meteo NEUTRE sans jamais tuer le processus.
+Outputs: macro_weather.json (instant status), macro_history.json
+(compact daily archive for statistical validation) and the Telegram
+report. INFORMATIONAL: no sizing is modified until the macro filter is
+backtested (roadmap 4). Fallback: any failure writes a NEUTRAL weather
+without ever killing the process.
 
-Config : bots/macro_config.json (gitignore, voir l'exemple) ou
-ANTHROPIC_API_KEY. `--once` : pipeline immediat puis exit.
+Config: bots/macro_config.json (gitignored, see the example) or
+ANTHROPIC_API_KEY. `--once`: immediate pipeline then exit.
 """
 
 import asyncio
@@ -38,13 +39,13 @@ from anthropic import AsyncAnthropic
 from sentinel_macro_sources import build_dossier, collect_all
 
 # --- Configuration ---
-COLLECT_HOUR = 8              # 08:00 UTC : ingestion + conseil LLM
-SEND_HOUR, SEND_MINUTE = 8, 30  # 08:30 UTC : envoi Telegram
+COLLECT_HOUR = 8              # 08:00 UTC: ingestion + LLM council
+SEND_HOUR, SEND_MINUTE = 8, 30  # 08:30 UTC: Telegram send
 POLL_SECONDS = 30
 
-# Modeles par agent, surchargeables via macro_config.json "model_mapping"
-# (memes cles) : fable-5 = raisonnement geo/macro (effort low, fallback
-# serveur opus sur refus), haiku-4-5 = scanners, opus-4-8 = juge.
+# Models per agent, overridable via macro_config.json "model_mapping"
+# (same keys): fable-5 = geo/macro reasoning (low effort, server-side
+# opus fallback on refusal), haiku-4-5 = scanners, opus-4-8 = judge.
 DEFAULT_MODELS = {
     "agent_geopolitics": "claude-fable-5",
     "agent_macro": "claude-fable-5",
@@ -52,7 +53,7 @@ DEFAULT_MODELS = {
     "agent_flow_trader": "claude-haiku-4-5",
     "agent_juge_synthesizer": "claude-opus-4-8",
 }
-MAX_TOKENS, FETCH_TIMEOUT = 4000, 20.0  # plafond dur par appel ; timeout
+MAX_TOKENS, FETCH_TIMEOUT = 4000, 20.0  # hard cap per call; timeout
 
 _DIR = os.path.dirname(os.path.abspath(__file__))
 LOG_DIR = os.path.join(os.path.dirname(_DIR), "logs")
@@ -66,110 +67,115 @@ HEARTBEAT_FILE = os.path.join(LOG_DIR, "sentinel_macro_analyst.hb")
 
 log = logging.getLogger("macro")
 
-# Meteo -> (emoji, reco bots 1&3 directionnels, reco bot 2 stat-arb/reversion)
+# Weather -> (emoji, reco for directional bots 1&3, reco for bot 2 stat-arb/reversion)
 WEATHER_META = {
-    "ORAGEUX": ("\U0001f32a️",
-                "\U0001f7e2 Priorite haute (recherche de momentum)",
-                "\U0001f7e1 Prudence autour des annonces (spread instable)"),
-    "CALME": ("☀️",
-              "\U0001f7e1 Prudence (faux breakouts probables)",
-              "\U0001f7e2 Conditions favorables (retour a la moyenne)"),
-    "NEUTRE": ("⛅",
-               "\U0001f7e1 Regime normal, pas de biais",
-               "\U0001f7e1 Regime normal, pas de biais"),
+    "STORMY": ("\U0001f32a️",
+               "\U0001f7e2 High priority (momentum hunting)",
+               "\U0001f7e1 Caution around releases (unstable spread)"),
+    "CALM": ("☀️",
+             "\U0001f7e1 Caution (false breakouts likely)",
+             "\U0001f7e2 Favourable conditions (mean reversion)"),
+    "NEUTRAL": ("⛅",
+                "\U0001f7e1 Normal regime, no bias",
+                "\U0001f7e1 Normal regime, no bias"),
 }
 
+# Legacy French values still present in files written before the
+# English migration (macro_weather.json, macro_history.json).
+LEGACY_VALUES = {"ORAGEUX": "STORMY", "CALME": "CALM", "NEUTRE": "NEUTRAL",
+                 "AUCUN": "NONE"}
+
 AGENTS = (
-    {"cle": "geo", "nom": "Geopolitique",
+    {"key": "geo", "name": "Geopolitics",
      "model_key": "agent_geopolitics", "sections": ("calendar", "geo"),
      "system": (
-         "Tu es un analyste geopolitique senior specialise dans les goulots "
-         "d'etranglement de l'energie (detroit d'Ormuz, Bab el-Mandeb, mer "
-         "Rouge) et les metaux precieux. A partir du dossier, evalue "
-         "l'impact des tensions du jour sur l'Or (XAU) et le Petrole "
-         "(Brent/WTI) : risque d'escalade, primes de risque, flux refuge. "
-         "3 a 5 phrases, 80 mots maximum, en francais, elements "
-         "concrets du dossier, uniquement l'analyse.")},
-    {"cle": "macro", "nom": "Macro & banques centrales",
+         "You are a senior geopolitical analyst specialized in energy "
+         "chokepoints (Strait of Hormuz, Bab el-Mandeb, Red Sea) and "
+         "precious metals. From the dossier, assess the impact of today's "
+         "tensions on Gold (XAU) and Oil (Brent/WTI): escalation risk, "
+         "risk premiums, safe-haven flows. 3 to 5 sentences, 80 words "
+         "maximum, in English, concrete elements from the dossier, "
+         "analysis only.")},
+    {"key": "macro", "name": "Macro & central banks",
      "model_key": "agent_macro", "sections": ("calendar", "geo"),
      "system": (
-         "Tu es un economiste de marche. Analyse la politique de la Fed, "
-         "l'inflation, les taux d'interet et le calendrier economique du "
-         "dossier ; evalue l'impact attendu sur USD, EUR, GBP et les "
-         "indices pour la journee (heures UTC des annonces). 3 a 5 "
-         "phrases, 80 mots maximum, en francais, uniquement l'analyse.")},
-    {"cle": "sentiment", "nom": "Sentiment & reseaux sociaux",
+         "You are a market economist. Analyze Fed policy, inflation, "
+         "interest rates and the economic calendar in the dossier; assess "
+         "the expected impact on USD, EUR, GBP and indices for the day "
+         "(UTC times of the releases). 3 to 5 sentences, 80 words "
+         "maximum, in English, analysis only.")},
+    {"key": "sentiment", "name": "Sentiment & social media",
      "model_key": "agent_sentiment", "sections": ("social",),
      "system": (
-         "Tu es un specialiste de la psychologie des foules et du "
-         "sentiment de marche. Analyse les declarations d'influenceurs du "
-         "dossier (Trump, Musk, officiels US/Chine...) et detecte si une "
-         "rumeur ou une annonce non conventionnelle peut creer une panique "
-         "ou un mouvement violent a l'ouverture. Ignore le bruit sans lien "
-         "avec l'or, le petrole ou les devises. 2 a 4 phrases, 60 mots "
-         "maximum, en francais, uniquement l'analyse.")},
-    {"cle": "flux", "nom": "Stratege de flux (sell-side)",
+         "You are a specialist in crowd psychology and market sentiment. "
+         "Analyze the influencer statements in the dossier (Trump, Musk, "
+         "US/China officials...) and detect whether a rumour or an "
+         "unconventional announcement could create a panic or a violent "
+         "move at the open. Ignore noise unrelated to gold, oil or "
+         "currencies. 2 to 4 sentences, 60 words maximum, in English, "
+         "analysis only.")},
+    {"key": "flow", "name": "Flow strategist (sell-side)",
      "model_key": "agent_flow_trader", "sections": ("banks",),
      "system": (
-         "Tu es un stratege de marche sell-side dans une grande banque "
-         "d'affaires. A partir des notes bank desks du dossier (Goldman "
-         "Sachs, JPMorgan, Morgan Stanley, Citi...), analyse le "
-         "positionnement des gros flux institutionnels, les niveaux de "
-         "support/resistance cites et les zones probables de liquidation "
-         "massive (stop hunting, poches de liquidite) sur l'Or et le "
-         "Forex. Cite banque et niveau quand le dossier les donne ; "
-         "n'invente JAMAIS un niveau de prix absent du dossier. 2 a 4 "
-         "phrases, 60 mots maximum, en francais, uniquement l'analyse.")},
+         "You are a sell-side market strategist at a major investment "
+         "bank. From the bank-desk notes in the dossier (Goldman Sachs, "
+         "JPMorgan, Morgan Stanley, Citi...), analyze the positioning of "
+         "large institutional flows, the quoted support/resistance levels "
+         "and the likely zones of massive liquidation (stop hunting, "
+         "liquidity pockets) on Gold and Forex. Quote bank and level when "
+         "the dossier provides them; NEVER invent a price level absent "
+         "from the dossier. 2 to 4 sentences, 60 words maximum, in "
+         "English, analysis only.")},
 )
 
 PROMPT_SYNTH = (
-    "Tu es le SYNTHETISEUR d'un conseil de quatre analystes (geopolitique, "
-    "macro/banques centrales, sentiment/reseaux sociaux, stratege de flux "
-    "sell-side). Lis le dossier puis leurs analyses, confronte-les et "
-    "tranche la meteo du jour pour un desk quantitatif : ORAGEUX (forte "
-    "volatilite directionnelle attendue, favorable au trend/breakout), "
-    "CALME (marche plat/compresse, favorable au stat-arb et a la "
-    "reversion) ou NEUTRE (aucun signal dominant). Donne une confiance "
-    "entre 0 et 1, le focus principal du jour (annonce ou theme, heure UTC "
-    "si connue), un resume d'une phrase de chaque analyse, une ligne "
-    "'cibles bancaires' (banque + niveau si le dossier en donne, sinon "
-    "'aucune cible publiee'), le CONFLIT D'INTERET DU JOUR : le "
-    "desaccord le plus significatif entre deux analystes et comment tu le "
-    "tranches (ou 'aucun conflit notable'), et primary_asset : l'actif de "
-    "la flotte le plus concerne par le focus du jour (AUCUN si aucun ne "
-    "domine). Reponds en francais, chaque champ en une seule phrase dense.")
+    "You are the SYNTHESIZER of a council of four analysts (geopolitics, "
+    "macro/central banks, sentiment/social media, sell-side flow "
+    "strategist). Read the dossier then their analyses, confront them and "
+    "decide today's weather for a quantitative desk: STORMY (strong "
+    "directional volatility expected, favourable to trend/breakout), "
+    "CALM (flat/compressed market, favourable to stat-arb and "
+    "reversion) or NEUTRAL (no dominant signal). Give a confidence "
+    "between 0 and 1, the main focus of the day (release or theme, UTC "
+    "time if known), a one-sentence summary of each analysis, a 'bank "
+    "targets' line (bank + level if the dossier provides one, otherwise "
+    "'no published target'), the CONFLICT OF THE DAY: the most "
+    "significant disagreement between two analysts and how you settle it "
+    "(or 'no notable conflict'), and primary_asset: the fleet asset most "
+    "concerned by today's focus (NONE if none dominates). Answer in "
+    "English, each field in a single dense sentence.")
 
-FLEET_ASSETS = ("XAUUSD", "XTIUSD", "XBRUSD", "EURUSD", "GBPUSD", "US500", "AUCUN")
+FLEET_ASSETS = ("XAUUSD", "XTIUSD", "XBRUSD", "EURUSD", "GBPUSD", "US500", "NONE")
 
 SYNTH_SCHEMA = {
     "type": "object",
     "properties": {
-        "weather": {"type": "string", "enum": ["ORAGEUX", "CALME", "NEUTRE"]},
+        "weather": {"type": "string", "enum": ["STORMY", "CALM", "NEUTRAL"]},
         "confidence": {"type": "number"},
         "focus": {"type": "string"},
-        "geo_resume": {"type": "string"},
-        "macro_resume": {"type": "string"},
-        "sentiment_resume": {"type": "string"},
-        "banks_resume": {"type": "string"},
+        "geo_summary": {"type": "string"},
+        "macro_summary": {"type": "string"},
+        "sentiment_summary": {"type": "string"},
+        "banks_summary": {"type": "string"},
         "conflict": {"type": "string"},
         "primary_asset": {"type": "string", "enum": list(FLEET_ASSETS)},
     },
-    "required": ["weather", "confidence", "focus", "geo_resume",
-                 "macro_resume", "sentiment_resume", "banks_resume",
+    "required": ["weather", "confidence", "focus", "geo_summary",
+                 "macro_summary", "sentiment_summary", "banks_summary",
                  "conflict", "primary_asset"],
     "additionalProperties": False,
 }
 
 NEUTRAL_FALLBACK = {
-    "weather": "NEUTRE", "confidence": 0.0,
-    "focus": "indisponible (repli automatique)",
-    "geo_resume": "indisponible", "macro_resume": "indisponible",
-    "sentiment_resume": "indisponible", "banks_resume": "indisponible",
-    "conflict": "indisponible", "primary_asset": "AUCUN",
+    "weather": "NEUTRAL", "confidence": 0.0,
+    "focus": "unavailable (automatic fallback)",
+    "geo_summary": "unavailable", "macro_summary": "unavailable",
+    "sentiment_summary": "unavailable", "banks_summary": "unavailable",
+    "conflict": "unavailable", "primary_asset": "NONE",
 }
 
 
-# --- Etat, fenetres horaires et fichiers (fonctions pures, testables) ---
+# --- State, time windows and files (pure, testable functions) ---
 def load_json(path: str) -> dict:
     try:
         with open(path, encoding="utf-8") as fh:
@@ -180,7 +186,7 @@ def load_json(path: str) -> dict:
 
 
 def save_json_atomic(path: str, payload: dict):
-    """Temporaire + os.replace : l'etat precedent survit a un crash."""
+    """Temp file + os.replace: the previous state survives a crash."""
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as fh:
         json.dump(payload, fh, ensure_ascii=False)
@@ -189,7 +195,7 @@ def save_json_atomic(path: str, payload: dict):
 
 def write_heartbeat(path: str = HEARTBEAT_FILE,
                     now: datetime | None = None):
-    """Estampille de vie apres chaque cycle reussi (lue par le watchdog)."""
+    """Liveness timestamp after each successful cycle (read by the watchdog)."""
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w", encoding="utf-8") as fh:
@@ -199,14 +205,14 @@ def write_heartbeat(path: str = HEARTBEAT_FILE,
 
 
 def should_collect(state: dict, now: datetime) -> bool:
-    """Ingestion + conseil une seule fois par jour, a partir de 08:00 UTC."""
+    """Ingestion + council once per day, from 08:00 UTC."""
     return (now.hour >= COLLECT_HOUR
             and state.get("last_collect_day") != now.date().isoformat())
 
 
 def should_send(state: dict, now: datetime) -> bool:
-    """Envoi une seule fois par jour, a partir de 08:30 UTC strictement,
-    et uniquement si le rapport du jour a ete prepare."""
+    """Send once per day, strictly from 08:30 UTC, and only if today's
+    report has been prepared."""
     today = now.date().isoformat()
     return (state.get("report_day") == today
             and state.get("last_send_day") != today
@@ -214,28 +220,31 @@ def should_send(state: dict, now: datetime) -> bool:
 
 
 def write_weather(verdict: dict, now: datetime, path: str | None = None):
-    """Sortie 1 : le fichier partage macro_weather.json (ecriture atomique).
+    """Output 1: the shared macro_weather.json file (atomic write).
 
-    Contient aussi les resumes du conseil et le conflit du jour : le
-    dashboard les affiche dans ses onglets Debat/Cibles/Conflit."""
+    Also contains the council's summaries and the conflict of the day:
+    the dashboard shows them in its Debate/Targets/Conflict tabs."""
     save_json_atomic(path or WEATHER_FILE, {
         "weather": verdict["weather"],
         "confidence": round(float(verdict["confidence"]), 2),
         "focus": verdict["focus"],
-        "geo_resume": verdict.get("geo_resume", ""),
-        "macro_resume": verdict.get("macro_resume", ""),
-        "sentiment_resume": verdict.get("sentiment_resume", ""),
-        "banks_resume": verdict.get("banks_resume", ""),
+        "geo_summary": verdict.get("geo_summary", ""),
+        "macro_summary": verdict.get("macro_summary", ""),
+        "sentiment_summary": verdict.get("sentiment_summary", ""),
+        "banks_summary": verdict.get("banks_summary", ""),
         "conflict": verdict.get("conflict", ""),
-        "primary_asset": verdict.get("primary_asset", "AUCUN"),
+        "primary_asset": verdict.get("primary_asset", "NONE"),
         "date": now.date().isoformat(),
         "generated_at": now.isoformat(),
     })
 
 
 def append_history(verdict: dict, now: datetime, path: str | None = None):
-    """Archive quotidienne (tableau trie par date, upsert du jour) pour
-    la validation statistique ; ne leve JAMAIS (E/S non bloquante)."""
+    """Daily archive (array sorted by date, upsert of the day) for
+    statistical validation; NEVER raises (non-blocking I/O).
+
+    Legacy French values (ORAGEUX...) in existing entries are migrated
+    to English on the fly - the whole file is rewritten each day."""
     try:
         hist = []
         try:
@@ -243,29 +252,33 @@ def append_history(verdict: dict, now: datetime, path: str | None = None):
                 data = json.load(fh)
             hist = data if isinstance(data, list) else []
         except (OSError, ValueError):
-            pass                                  # fichier absent : cree
+            pass                                  # missing file: created
+        for e in hist:                            # legacy value migration
+            e["weather"] = LEGACY_VALUES.get(e.get("weather"), e.get("weather"))
+            e["primary_asset"] = LEGACY_VALUES.get(e.get("primary_asset"),
+                                                   e.get("primary_asset"))
         today = now.date().isoformat()
         hist = [e for e in hist if e.get("date") != today]
         hist.append({"date": today, "weather": verdict["weather"],
                      "confidence": round(float(verdict["confidence"]), 2),
                      "focus": verdict["focus"],
-                     "primary_asset": verdict.get("primary_asset", "AUCUN")})
+                     "primary_asset": verdict.get("primary_asset", "NONE")})
         hist.sort(key=lambda e: e.get("date", ""))
         save_json_atomic(path or HISTORY_FILE, hist)
     except Exception as exc:
-        log.warning("Archivage meteo KO (%s) : rapport non bloque.", exc)
+        log.warning("Weather archiving KO (%s): report not blocked.", exc)
 
 
-# --- Le conseil multi-agents (4 specialistes en parallele, puis le synthetiseur) ---
+# --- The multi-agent council (4 specialists in parallel, then the synthesizer) ---
 def agent_models() -> dict:
-    """Mapping effectif : defauts + surcharges de macro_config.json."""
+    """Effective mapping: defaults + macro_config.json overrides."""
     return DEFAULT_MODELS | (load_json(CONFIG_FILE).get("model_mapping")
                              or {})
 
 
 def _llm_kwargs(model: str) -> dict:
-    """Regles API par famille : fable = thinking integre + effort low +
-    fallback opus ; haiku = ni adaptatif ni effort ; opus = adaptatif."""
+    """API rules per family: fable = built-in thinking + low effort +
+    opus fallback; haiku = neither adaptive nor effort; opus = adaptive."""
     if "fable" in model:
         return {"betas": ["server-side-fallback-2026-06-01"],
                 "fallbacks": [{"model": "claude-opus-4-8"}],
@@ -277,22 +290,22 @@ def _llm_kwargs(model: str) -> dict:
 
 
 async def _create(llm: AsyncAnthropic, model: str, **kw):
-    """Appel LLM avec les parametres de la famille ; leve sur refus."""
+    """LLM call with the family's parameters; raises on refusal."""
     extra = _llm_kwargs(model)
-    if "output_config" in kw:                 # fusion format + effort
+    if "output_config" in kw:                 # merge format + effort
         kw["output_config"] = (extra.pop("output_config", {})
                                | kw["output_config"])
     api = llm.beta.messages if "betas" in extra else llm.messages
     resp = await api.create(model=model, max_tokens=MAX_TOKENS,
                             **extra, **kw)
     if resp.stop_reason == "refusal":
-        raise RuntimeError(f"refus du modele {model}")
+        raise RuntimeError(f"refusal from model {model}")
     return resp
 
 
 async def _analysis(llm: AsyncAnthropic, agent: dict, sources: dict,
                     now: datetime, models: dict) -> str:
-    """Un specialiste : ne recoit que ses sections du dossier (tokens)."""
+    """One specialist: only receives its dossier sections (tokens)."""
     dossier = build_dossier(sources, now, only=agent["sections"])
     resp = await _create(llm, models[agent["model_key"]],
                          system=agent["system"],
@@ -302,16 +315,16 @@ async def _analysis(llm: AsyncAnthropic, agent: dict, sources: dict,
 
 async def run_council(llm: AsyncAnthropic, sources: dict,
                       now: datetime) -> dict:
-    """Quatre analyses en parallele, puis le synthetiseur (JSON par schema).
+    """Four analyses in parallel, then the synthesizer (schema JSON).
 
-    Toute erreur (API, reseau, refus) => meteo NEUTRE, sans lever.
+    Any error (API, network, refusal) => NEUTRAL weather, without raising.
     """
     try:
         models = agent_models()
         analyses = await asyncio.gather(*(_analysis(llm, a, sources, now,
                                                     models) for a in AGENTS))
         council = build_dossier(sources, now) + "".join(
-            f"\n\nANALYSE {a['nom'].upper()} :\n{txt}"
+            f"\n\n{a['name'].upper()} ANALYSIS:\n{txt}"
             for a, txt in zip(AGENTS, analyses))
         resp = await _create(
             llm, models["agent_juge_synthesizer"], system=PROMPT_SYNTH,
@@ -323,42 +336,42 @@ async def run_council(llm: AsyncAnthropic, sources: dict,
         verdict["confidence"] = min(1.0, max(0.0,
                                              float(verdict["confidence"])))
         if verdict["weather"] not in WEATHER_META:
-            raise ValueError(f"meteo inconnue {verdict['weather']!r}")
+            raise ValueError(f"unknown weather {verdict['weather']!r}")
         return verdict
     except Exception as exc:
-        log.error("Conseil LLM en echec (%s) : repli meteo NEUTRE.", exc)
+        log.error("LLM council failed (%s): NEUTRAL weather fallback.", exc)
         return dict(NEUTRAL_FALLBACK)
 
 
 def format_report(verdict: dict, now: datetime) -> str:
-    """Sortie 2 : le rapport Telegram structure."""
+    """Output 2: the structured Telegram report."""
     emoji, reco_dir, reco_range = WEATHER_META[verdict["weather"]]
     pct = round(float(verdict["confidence"]) * 100)
-    return (f"\U0001f916 [SENTINEL BOT 7] — METEO DU MARCHE ({now:%d/%m/%Y})\n"
-            f"\nMeteo : {emoji} {verdict['weather']} (Confiance : {pct}%)\n"
-            f"Focus : {verdict['focus']}\n"
-            f"\n\U0001f9ed LE CONSEIL :\n"
-            f"• Geopolitique : \"{verdict['geo_resume']}\"\n"
-            f"• Macro : \"{verdict['macro_resume']}\"\n"
-            f"• Sentiment : \"{verdict['sentiment_resume']}\"\n"
-            f"\n\U0001f4bc ANALYSTES & BANK DESKS (Agent 4) :\n"
-            f"• {verdict['banks_resume']}\n"
-            f"\n\U0001f3af CONFLIT D'INTERET DU JOUR :\n"
+    return (f"\U0001f916 [SENTINEL BOT 7] — MARKET WEATHER ({now:%Y-%m-%d})\n"
+            f"\nWeather: {emoji} {verdict['weather']} (Confidence: {pct}%)\n"
+            f"Focus: {verdict['focus']}\n"
+            f"\n\U0001f9ed THE COUNCIL:\n"
+            f"• Geopolitics: \"{verdict['geo_summary']}\"\n"
+            f"• Macro: \"{verdict['macro_summary']}\"\n"
+            f"• Sentiment: \"{verdict['sentiment_summary']}\"\n"
+            f"\n\U0001f4bc ANALYSTS & BANK DESKS (Agent 4):\n"
+            f"• {verdict['banks_summary']}\n"
+            f"\n\U0001f3af CONFLICT OF THE DAY:\n"
             f"{verdict['conflict']}\n"
-            f"\n\U0001f3af PRECONISATION FLOTTE :\n"
-            f"• Bot 1 (Breakout) & Bot 3 (Trend) : {reco_dir}\n"
-            f"• Bot 2 (Stat-arb) & Reversion : {reco_range}\n"
-            f"\n(Informatif : aucun sizing n'est modifie tant que le filtre "
-            f"macro n'est pas backteste - AMELIORATION_CONTINUE.md)")
+            f"\n\U0001f3af FLEET RECOMMENDATION:\n"
+            f"• Bot 1 (Breakout) & Bot 3 (Trend): {reco_dir}\n"
+            f"• Bot 2 (Stat-arb) & Reversion: {reco_range}\n"
+            f"\n(Informational: no sizing is modified until the macro "
+            f"filter is backtested - AMELIORATION_CONTINUE.md)")
 
 
-# --- Telegram (reutilise les credentials du projet, jamais commites) ---
+# --- Telegram (reuses the project's credentials, never committed) ---
 async def send_telegram(text: str) -> bool:
     token = (load_json(TELEGRAM_CONFIG).get("token")
              or os.environ.get("TELEGRAM_BOT_TOKEN"))
     chat_id = load_json(TELEGRAM_STATE).get("chat_id")
     if not token or not chat_id:
-        log.warning("Telegram non configure (token/chat_id) : envoi saute.")
+        log.warning("Telegram not configured (token/chat_id): send skipped.")
         return False
     try:
         async with httpx.AsyncClient() as client:
@@ -368,13 +381,13 @@ async def send_telegram(text: str) -> bool:
                 timeout=FETCH_TIMEOUT)
         return bool(resp.json().get("ok"))
     except Exception as exc:
-        log.error("Envoi Telegram KO : %s", exc)
+        log.error("Telegram send KO: %s", exc)
         return False
 
 
-# --- Cycle principal ---
+# --- Main cycle ---
 async def collect_and_judge(llm: AsyncAnthropic, state: dict, now: datetime):
-    """08:00 : sources -> conseil -> macro_weather.json + rapport en attente."""
+    """08:00: sources -> council -> macro_weather.json + pending report."""
     cfg = load_json(CONFIG_FILE)
     sources = await collect_all(
         extra_social=tuple(cfg.get("social_feeds") or ()),
@@ -386,7 +399,7 @@ async def collect_and_judge(llm: AsyncAnthropic, state: dict, now: datetime):
     state["report_day"] = now.date().isoformat()
     state["report"] = format_report(verdict, now)
     save_json_atomic(STATE_FILE, state)
-    log.info("Meteo du %s : %s (confiance %.2f) -> macro_weather.json",
+    log.info("Weather for %s: %s (confidence %.2f) -> macro_weather.json",
              now.date(), verdict["weather"], verdict["confidence"])
 
 
@@ -397,7 +410,7 @@ async def run_cycle(llm: AsyncAnthropic, state: dict,
         await collect_and_judge(llm, state, now)
     if should_send(state, now):
         if await send_telegram(state.get("report", "")):
-            log.info("Rapport meteo envoye sur Telegram.")
+            log.info("Weather report sent to Telegram.")
         state["last_send_day"] = now.date().isoformat()
         save_json_atomic(STATE_FILE, state)
 
@@ -410,31 +423,31 @@ def anthropic_key() -> str | None:
 async def main_async(once: bool = False) -> int:
     key = anthropic_key()
     if not key:
-        log.warning("Pas de cle API Anthropic : creer bots/macro_config.json "
-                    "(voir macro_config.example.json). En attente...")
-    while not key:                    # attente passive, watchdog-friendly
+        log.warning("No Anthropic API key: create bots/macro_config.json "
+                    "(see macro_config.example.json). Waiting...")
+    while not key:                    # passive wait, watchdog-friendly
         write_heartbeat()
         await asyncio.sleep(60)
         key = anthropic_key()
     llm = AsyncAnthropic(api_key=key)
     state = load_json(STATE_FILE)
-    if once:                          # pipeline immediat (test manuel)
+    if once:                          # immediate pipeline (manual test)
         now = datetime.now(timezone.utc)
         await collect_and_judge(llm, state, now)
         print(state["report"])
         if await send_telegram(state["report"]):
             state["last_send_day"] = now.date().isoformat()
-            save_json_atomic(STATE_FILE, state)   # pas de double envoi
+            save_json_atomic(STATE_FILE, state)   # no double send
         return 0
-    log.info("Demarrage SENTINEL MACRO ANALYST (ingestion %02d:00, envoi "
-             "%02d:%02d UTC, %d agents + synthetiseur)",
+    log.info("Starting SENTINEL MACRO ANALYST (ingestion %02d:00, send "
+             "%02d:%02d UTC, %d agents + synthesizer)",
              COLLECT_HOUR, SEND_HOUR, SEND_MINUTE, len(AGENTS))
     while True:
         try:
             await run_cycle(llm, state)
             write_heartbeat()
-        except Exception as exc:      # jamais de crash : repli et on continue
-            log.exception("Erreur inattendue : %s", exc)
+        except Exception as exc:      # never crash: fall back and continue
+            log.exception("Unexpected error: %s", exc)
         await asyncio.sleep(POLL_SECONDS)
 
 

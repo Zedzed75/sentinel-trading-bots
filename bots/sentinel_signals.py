@@ -1,8 +1,8 @@
-"""SENTINEL - Fonctions pures de strategie du bot 1 (sentinel_bot.py).
+"""SENTINEL - Pure strategy functions of bot 1 (sentinel_bot.py).
 
-Indicateurs, fenetres horaires et logique de signaux : aucun acces MT5 ni
-reseau, tout est testable directement (tests/test_sentinel_signals.py) et
-reutilisable par la recherche (research/backtest_sentinel.py).
+Indicators, trading windows and signal logic: no MT5 or network access,
+everything is directly testable (tests/test_sentinel_signals.py) and
+reusable by research (research/backtest_sentinel.py).
 """
 
 import logging
@@ -12,19 +12,19 @@ import numpy as np
 import pandas as pd
 
 # ----------------------------------------------------------------------------
-# Parametres de strategie
+# Strategy parameters
 # ----------------------------------------------------------------------------
-# Fenetres d'entree par strategie (UTC reel). Le breakout se joue des la
-# fin de la plage asiatique (cassure fraiche a l'ouverture occidentale,
-# l'edge documente des "opening range breakouts") jusqu'a la fin du
-# recouvrement Londres/NY ; la reversion sur le recouvrement et l'apres-midi
-# NY (calme propice au range). La gestion des positions n'est jamais bloquee.
+# Entry windows per strategy (real UTC). The breakout plays from the end
+# of the Asian range (fresh break at the Western open, the documented
+# "opening range breakouts" edge) until the end of the London/NY overlap;
+# reversion during the overlap and the NY afternoon (calm favourable to
+# ranges). Position management is never blocked.
 BREAKOUT_HOUR_START = 8
 BREAKOUT_HOUR_END = 16
 REVERSION_HOUR_START = 13
 REVERSION_HOUR_END = 18
-FORCE_TRADING_HOURS = False   # bypass horaires pour test en direct uniquement
-ASIA_HOUR_START = 22          # plage asiatique 22:00 -> 08:00 UTC
+FORCE_TRADING_HOURS = False   # hours bypass for live testing only
+ASIA_HOUR_START = 22          # Asian range 22:00 -> 08:00 UTC
 ASIA_HOUR_END = 8
 
 ATR_PERIOD = 14
@@ -33,8 +33,8 @@ BB_DEV = 2.0
 RSI_PERIOD = 14
 RSI_OVERSOLD = 20
 RSI_OVERBOUGHT = 80
-RANGE_LOOKBACK = 12           # bougies pour juger l'ecart-type "plat"
-RANGE_FLAT_TOL = 0.25         # coef. de variation max de l'ecart-type
+RANGE_LOOKBACK = 12           # candles to judge a "flat" std dev
+RANGE_FLAT_TOL = 0.25         # max coefficient of variation of the std dev
 
 VIX_MAX_FOR_SELL = 25.0
 
@@ -42,10 +42,10 @@ log = logging.getLogger("sentinel")
 
 
 # ----------------------------------------------------------------------------
-# Indicateurs
+# Indicators
 # ----------------------------------------------------------------------------
 def rsi(close: pd.Series, period: int = RSI_PERIOD) -> pd.Series:
-    """RSI de Wilder."""
+    """Wilder's RSI."""
     delta = close.diff()
     gain = delta.clip(lower=0).ewm(alpha=1 / period, adjust=False).mean()
     loss = (-delta.clip(upper=0)).ewm(alpha=1 / period, adjust=False).mean()
@@ -55,14 +55,14 @@ def rsi(close: pd.Series, period: int = RSI_PERIOD) -> pd.Series:
 
 
 def bollinger(close: pd.Series, period: int = BB_PERIOD, ndev: float = BB_DEV):
-    """Retourne (bande sup, moyenne, bande inf)."""
+    """Returns (upper band, mean, lower band)."""
     ma = close.rolling(period).mean()
     sd = close.rolling(period).std()
     return ma + ndev * sd, ma, ma - ndev * sd
 
 
 def atr(df: pd.DataFrame, period: int = ATR_PERIOD) -> pd.Series:
-    """ATR de Wilder sur colonnes high/low/close."""
+    """Wilder's ATR on high/low/close columns."""
     prev_close = df["close"].shift()
     tr = pd.concat([df["high"] - df["low"],
                     (df["high"] - prev_close).abs(),
@@ -73,10 +73,10 @@ def atr(df: pd.DataFrame, period: int = ATR_PERIOD) -> pd.Series:
 def is_flat_range(close: pd.Series, period: int = BB_PERIOD,
                   lookback: int = RANGE_LOOKBACK,
                   tol: float = RANGE_FLAT_TOL) -> bool:
-    """Phase de range : ecart-type Bollinger plat ET moyenne mobile plate.
+    """Range phase: flat Bollinger std dev AND flat moving average.
 
-    Une tendance reguliere a aussi un ecart-type constant : on exige en plus
-    que la moyenne mobile derive de moins d'un ecart-type sur le lookback.
+    A steady trend also has a constant std dev: we additionally require
+    the moving average to drift less than one std dev over the lookback.
     """
     sd = close.rolling(period).std().dropna()
     ma = close.rolling(period).mean().dropna()
@@ -92,30 +92,30 @@ def is_flat_range(close: pd.Series, period: int = BB_PERIOD,
 
 
 # ----------------------------------------------------------------------------
-# Fenetres horaires et logique de signaux
+# Trading windows and signal logic
 # ----------------------------------------------------------------------------
 def price_fmt(symbol: str) -> str:
-    """Format d'affichage des prix : 2 decimales pour l'or, 5 pour le forex."""
+    """Price display format: 2 decimals for gold, 5 for forex."""
     return "%.2f" if "XAU" in symbol.upper() else "%.5f"
 
 
 def fp(symbol: str, value: float | None) -> str:
-    """Prix formate pour les logs selon la precision de l'actif."""
+    """Price formatted for logs according to the asset's precision."""
     return "n/a" if value is None else price_fmt(symbol) % value
 
 
 def in_trading_hours(now: datetime, start: int, end: int) -> bool:
-    """Nouvelles positions uniquement dans [start, end) UTC."""
-    if FORCE_TRADING_HOURS:  # bypass temporaire pour test en direct
+    """New positions only within [start, end) UTC."""
+    if FORCE_TRADING_HOURS:  # temporary bypass for live testing
         return True
     return start <= now.hour < end
 
 
 def asian_range(df_m30: pd.DataFrame, now: datetime):
-    """(high, low) de la plage 22:00 -> 08:00 UTC la plus recente terminee.
+    """(high, low) of the most recent completed 22:00 -> 08:00 UTC range.
 
-    df_m30['time'] doit etre en datetime UTC (ouverture de bougie).
-    Retourne (None, None) si aucune bougie dans la fenetre.
+    df_m30['time'] must be UTC datetime (candle open time).
+    Returns (None, None) if no candle falls within the window.
     """
     end = now.replace(hour=ASIA_HOUR_END, minute=0, second=0, microsecond=0)
     if now < end:
@@ -129,7 +129,7 @@ def asian_range(df_m30: pd.DataFrame, now: datetime):
 
 def breakout_signal(df_m30: pd.DataFrame, asia_high: float,
                     asia_low: float) -> str | None:
-    """BUY si cloture M30 > High asiatique, SELL si < Low asiatique."""
+    """BUY if M30 close > Asian High, SELL if < Asian Low."""
     if asia_high is None or asia_low is None or len(df_m30) < 1:
         return None
     close = float(df_m30["close"].iloc[-1])
@@ -141,7 +141,7 @@ def breakout_signal(df_m30: pd.DataFrame, asia_high: float,
 
 
 def reversion_signal(df_m5: pd.DataFrame) -> str | None:
-    """Mean reversion M5 : excursion hors bande + RSI extreme, puis retour."""
+    """M5 mean reversion: excursion beyond the band + extreme RSI, then return."""
     if len(df_m5) < BB_PERIOD + RANGE_LOOKBACK + 2:
         return None
     close = df_m5["close"]
@@ -161,11 +161,11 @@ def reversion_signal(df_m5: pd.DataFrame) -> str | None:
 
 def apply_macro_filter(signal: str | None, vix: float | None,
                        vix_filter: bool = True) -> str | None:
-    """Si l'actif a vix_filter : VIX > 25 (ou inconnu) interdit les SELL
-    (valeur refuge). Sans vix_filter, le signal passe tel quel."""
+    """If the asset has vix_filter: VIX > 25 (or unknown) forbids SELLs
+    (safe-haven asset). Without vix_filter, the signal passes as is."""
     if not vix_filter:
         return signal
     if signal == "SELL" and (vix is None or vix > VIX_MAX_FOR_SELL):
-        log.info("Signal SELL bloque par filtre macro (VIX=%s)", vix)
+        log.info("SELL signal blocked by macro filter (VIX=%s)", vix)
         return None
     return signal

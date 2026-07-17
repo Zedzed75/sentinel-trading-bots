@@ -1,24 +1,24 @@
-# Etat runtime des bots (references de balance, historique Kelly, verrous)
+# Bot runtime state (balance references, Kelly history, locks)
 sentinel_state.json
 alpha_state.json
 trend_state.json
 orchestrator_state.json
 risk_scale.json
 
-# Secrets Telegram (token) et etat du notifier (chat_id)
+# Telegram secrets (token) and notifier state (chat_id)
 telegram_config.json
 telegram_state.json
 
-# Secrets du dashboard web (Basic Auth)
+# Web dashboard secrets (Basic Auth)
 dashboard_config.json
 
-# Bot 7 : cle API Anthropic (secret), meteo et etat runtime
+# Bot 7: Anthropic API key (secret), weather and runtime state
 macro_config.json
 macro_weather.json
 macro_state.json
 macro_history.json
 
-# Logs runtime
+# Runtime logs
 logs/
 
 # Python

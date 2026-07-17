@@ -1,9 +1,9 @@
 name: validation-solo
 
-# Compte de validation de secours : quand un administrateur applique le
-# label "validation-solo" a une PR, le bot github-actions l'approuve.
-# A n'utiliser qu'en l'absence d'un autre developpeur disponible - la
-# pose du label est l'acte de validation, trace dans l'historique de la PR.
+# Backup validation account: when an administrator applies the
+# "validation-solo" label to a PR, the github-actions bot approves it.
+# Only to be used when no other developer is available - applying the
+# label is the act of validation, traced in the PR history.
 
 on:
   pull_request:
@@ -17,11 +17,11 @@ jobs:
     if: github.event.label.name == 'validation-solo'
     runs-on: ubuntu-latest
     steps:
-      - name: Approuver la PR (validation de secours)
+      - name: Approve the PR (backup validation)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: >
           gh pr review "${{ github.event.pull_request.number }}"
           --approve --repo "${{ github.repository }}"
-          --body "Validation de secours declenchee par le label
-          validation-solo (posee par un administrateur)."
+          --body "Backup validation triggered by the validation-solo
+          label (applied by an administrator)."
