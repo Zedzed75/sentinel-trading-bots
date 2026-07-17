@@ -1,6 +1,6 @@
-"""Tests SENTINEL RISK ORCHESTRATOR (MT5 mocke).
+"""SENTINEL RISK ORCHESTRATOR tests (MT5 mocked).
 
-Executer :  python -m unittest test_sentinel_risk_orchestrator -v
+Run:  python -m unittest test_sentinel_risk_orchestrator -v
 """
 
 import json
@@ -41,14 +41,14 @@ def temp_path():
 
 class TestVolTargeting(unittest.TestCase):
     def test_vol_scale_formula(self):
-        self.assertEqual(so.vol_scale(0.20), 0.5)     # cible 10% / realisee 20%
-        self.assertEqual(so.vol_scale(0.05), 1.0)     # vol basse : plein risque
-        self.assertEqual(so.vol_scale(1.00), so.MIN_SCALE)  # plancher
+        self.assertEqual(so.vol_scale(0.20), 0.5)     # target 10% / realized 20%
+        self.assertEqual(so.vol_scale(0.05), 1.0)     # low vol: full risk
+        self.assertEqual(so.vol_scale(1.00), so.MIN_SCALE)  # floor
         self.assertEqual(so.vol_scale(0.0), 1.0)
 
     def test_realized_vol_from_daily_equity(self):
         mon = so.EquityMonitor(temp_path())
-        # equite croissant de 1%/jour : vol des rendements quasi nulle
+        # equity growing 1%/day: near-zero return volatility
         base = datetime(2026, 7, 1, tzinfo=UTC)
         for i in range(10):
             mon.snapshot(base + timedelta(days=i), 10000 * 1.01 ** i)
@@ -64,7 +64,7 @@ class TestVolTargeting(unittest.TestCase):
         mon = so.EquityMonitor(temp_path())
         d = datetime(2026, 7, 14, 8, tzinfo=UTC)
         mon.snapshot(d, 10000.0)
-        mon.snapshot(d + timedelta(hours=6), 11000.0)   # meme jour : ignore
+        mon.snapshot(d + timedelta(hours=6), 11000.0)   # same day: ignored
         self.assertEqual(len(mon.history), 1)
         self.assertEqual(mon.history[0]["equity"], 10000.0)
 
@@ -113,8 +113,8 @@ class TestFleet(unittest.TestCase):
     def test_kill_fleet_spares_foreign_magics(self):
         fake_mt5.positions_get.return_value = [
             self._pos(1, 1001), self._pos(2, 4001), self._pos(3, 5003),
-            self._pos(4, 9999),        # EA externe : intouchable
-            self._pos(5, 0)]           # trade manuel : intouchable
+            self._pos(4, 9999),        # external EA: untouchable
+            self._pos(5, 0)]           # manual trade: untouchable
         so.kill_fleet()
         closed = [c[0][0]["position"]
                   for c in fake_mt5.order_send.call_args_list]
@@ -146,11 +146,11 @@ class TestRunCycle(unittest.TestCase):
 
     def test_normal_cycle_writes_neutral_scale(self):
         self._run(10000.0, datetime(2026, 7, 14, 14, tzinfo=UTC))
-        self.assertEqual(self._scale(), 1.0)   # historique court : neutre
+        self.assertEqual(self._scale(), 1.0)   # short history: neutral
         fake_mt5.order_send.assert_not_called()
 
     def test_high_realized_vol_reduces_scale(self):
-        # equite en dents de scie +/-3%/jour : vol annualisee >> 10%
+        # sawtooth equity +/-3%/day: annualized vol >> 10%
         base = datetime(2026, 7, 1, tzinfo=UTC)
         eq = 10000.0
         for i in range(12):
@@ -188,7 +188,7 @@ class TestPersistence(unittest.TestCase):
         mon._save()
         mon.locked = True
         with mock.patch.object(so.os, "replace",
-                               side_effect=OSError("disque plein")):
+                               side_effect=OSError("disk full")):
             mon._save()
         again = so.EquityMonitor(path)
         self.assertFalse(again.locked)

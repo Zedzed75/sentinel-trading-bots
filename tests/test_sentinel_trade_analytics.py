@@ -1,6 +1,6 @@
-"""Tests SENTINEL TRADE ANALYTICS (MT5 mocke).
+"""SENTINEL TRADE ANALYTICS tests (MT5 mocked).
 
-Executer :  python -m unittest test_sentinel_trade_analytics -v
+Run:  python -m unittest test_sentinel_trade_analytics -v
 """
 
 import csv
@@ -65,7 +65,7 @@ class TestBuildTrades(unittest.TestCase):
         trades = sa.build_trades(deals)
         self.assertEqual(len(trades), 1)
         t = trades[0]
-        self.assertEqual(t["pnl"], 93.0)          # net de frais et swap
+        self.assertEqual(t["pnl"], 93.0)          # net of fees and swap
         self.assertEqual(t["direction"], "long")
         self.assertEqual(t["strategy"], "breakout")
         self.assertEqual(t["symbol"], "XAUUSD.p")
@@ -102,17 +102,17 @@ class TestBuildTrades(unittest.TestCase):
         self.assertEqual(sa.build_trades(deals), [])
 
     def test_server_offset_converts_times_to_utc(self):
-        # deals estampilles UTC+3 : offset_h=3 rend les heures en UTC reel
+        # deals stamped UTC+3: offset_h=3 renders the times in real UTC
         deals = [_deal(15, entry=0, time=T0),
                  _deal(15, entry=1, time=T0 + 7200, profit=10.0)]
         t = sa.build_trades(deals, offset_h=3.0)[0]
         self.assertEqual(t["open_time"],
                          datetime.fromtimestamp(T0, tz=UTC)
                          - timedelta(hours=3))
-        self.assertAlmostEqual(t["duration_h"], 2.0)   # duree inchangee
+        self.assertAlmostEqual(t["duration_h"], 2.0)   # duration unchanged
 
     def test_open_hour_follows_utc_conversion(self):
-        # T0 = 12:00 UTC ; estampille serveur UTC+3 -> ouverture 09:00 UTC
+        # T0 = 12:00 UTC; server stamp UTC+3 -> open at 09:00 UTC
         deals = [_deal(16, entry=0, time=T0),
                  _deal(16, entry=1, time=T0 + 7200, profit=10.0)]
         self.assertEqual(sa.build_trades(deals)[0]["open_hour"], "12h")
@@ -137,7 +137,7 @@ class TestComputeStats(unittest.TestCase):
         self.assertEqual(st["profit_factor"], 3.0)   # 300 / 100
         self.assertEqual(st["expectancy"], 50.0)
         self.assertEqual(st["pnl"], 200.0)
-        self.assertEqual(st["max_dd"], 50.0)         # pic 100 -> creux 50
+        self.assertEqual(st["max_dd"], 50.0)         # peak 100 -> trough 50
 
     def test_empty(self):
         st = sa.compute_stats([])
@@ -183,12 +183,12 @@ class TestOutputs(unittest.TestCase):
         self.assertIn("Sentinel", html)
 
     def test_report_breaks_down_by_open_hour(self):
-        # deux strategies, ouvertures a 10:00 et 07:00 UTC (cloture +2h)
+        # two strategies, opens at 10:00 and 07:00 UTC (close +2h)
         trades = [_trade(50.0, NOW, strategy="breakout"),
                   _trade(-10.0, NOW - timedelta(hours=3),
                          strategy="reversion")]
         html = sa.render_html(trades, NOW)
-        self.assertIn("Par heure d'ouverture UTC", html)
+        self.assertIn("By UTC open hour", html)
         self.assertIn("<h3>breakout</h3>", html)
         self.assertIn("<h3>reversion</h3>", html)
         self.assertIn("<td>10h</td>", html)     # NOW 12:00 - 2h

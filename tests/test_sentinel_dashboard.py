@@ -1,8 +1,8 @@
-"""Tests SENTINEL DASHBOARD (MT5 et psutil mockes, fichiers en tempdir).
+"""SENTINEL DASHBOARD tests (MT5 and psutil mocked, files in tempdir).
 
-Executer :  python -m unittest test_sentinel_dashboard -v
-Garantie centrale : un JSON absent, vide ou corrompu ne fait jamais
-planter l'interface (build_state repond toujours).
+Run:  python -m unittest test_sentinel_dashboard -v
+Core guarantee: a missing, empty or corrupt JSON never crashes the
+interface (build_state always answers).
 """
 
 import json
@@ -33,7 +33,7 @@ def tmpfile(content: str | None, suffix=".json") -> str:
     fd, path = tempfile.mkstemp(suffix=suffix)
     os.close(fd)
     if content is None:
-        os.unlink(path)                    # fichier absent
+        os.unlink(path)                    # missing file
     else:
         with open(path, "w", encoding="utf-8") as fh:
             fh.write(content)
@@ -41,22 +41,22 @@ def tmpfile(content: str | None, suffix=".json") -> str:
 
 
 class TestRobustReads(unittest.TestCase):
-    """Fichiers absents / vides / corrompus : jamais d'exception."""
+    """Missing / empty / corrupt files: never an exception."""
 
     def test_load_json_missing_empty_corrupt(self):
         self.assertEqual(dash.load_json(tmpfile(None)), {})
         self.assertEqual(dash.load_json(tmpfile("")), {})
-        self.assertEqual(dash.load_json(tmpfile("{pas du json")), {})
-        self.assertEqual(dash.load_json(tmpfile("[1, 2]")), {})  # pas un objet
+        self.assertEqual(dash.load_json(tmpfile("{not json")), {})
+        self.assertEqual(dash.load_json(tmpfile("[1, 2]")), {})  # not an object
         self.assertEqual(dash.load_json(tmpfile('{"a": 1}')), {"a": 1})
 
     def test_read_trades_missing_and_corrupt(self):
         self.assertEqual(dash.read_trades(tmpfile(None, ".csv")), [])
         self.assertEqual(dash.read_trades(tmpfile("", ".csv")), [])
-        # entete ok mais lignes pourries : ignorees sans planter
+        # valid header but rotten lines: ignored without crashing
         path = tmpfile("close_time,strategy,pnl\n"
-                       "pas-une-date,breakout,12.5\n"
-                       "2026-07-15T10:00:00+00:00,breakout,pas-un-nombre\n"
+                       "not-a-date,breakout,12.5\n"
+                       "2026-07-15T10:00:00+00:00,breakout,not-a-number\n"
                        "2026-07-15T10:00:00+00:00,breakout,42.0\n", ".csv")
         rows = dash.read_trades(path)
         self.assertEqual(len(rows), 1)
@@ -67,22 +67,22 @@ class TestRobustReads(unittest.TestCase):
         fake_mt5.positions_get.return_value = None
         with mock.patch.object(dash, "BOTS_DIR", tempfile.mkdtemp()), \
              mock.patch.object(dash, "LOG_DIR", tempfile.mkdtemp()), \
-             mock.patch.object(dash, "TRADES_CSV", "introuvable.csv"):
+             mock.patch.object(dash, "TRADES_CSV", "missing.csv"):
             state = dash.build_state(NOW)
-        self.assertFalse(state["compte"]["ok"])
+        self.assertFalse(state["account"]["ok"])
         self.assertEqual(len(state["bots"]), 7)
-        self.assertTrue(all(b["statut"] == "arrete" for b in state["bots"]))
-        self.assertIsNone(state["jauge_jour"]["pct"])
-        self.assertFalse(state["verrou_global"])
+        self.assertTrue(all(b["status"] == "stopped" for b in state["bots"]))
+        self.assertIsNone(state["daily_gauge"]["pct"])
+        self.assertFalse(state["global_lock"])
         self.assertEqual(state["positions"], [])
 
 
 class TestStatusLogic(unittest.TestCase):
     def test_bot_status_priorities(self):
-        self.assertEqual(dash.bot_status(10, 300, locked=True), "suspendu")
-        self.assertEqual(dash.bot_status(10, 300, locked=False), "actif")
-        self.assertEqual(dash.bot_status(301, 300, locked=False), "fige")
-        self.assertEqual(dash.bot_status(None, 300, locked=False), "arrete")
+        self.assertEqual(dash.bot_status(10, 300, locked=True), "suspended")
+        self.assertEqual(dash.bot_status(10, 300, locked=False), "active")
+        self.assertEqual(dash.bot_status(301, 300, locked=False), "frozen")
+        self.assertEqual(dash.bot_status(None, 300, locked=False), "stopped")
 
     def test_heartbeat_age(self):
         d = tempfile.mkdtemp()
@@ -107,7 +107,7 @@ class TestStatusLogic(unittest.TestCase):
 
 class TestGaugeAndAccount(unittest.TestCase):
     def test_daily_gauge_values(self):
-        g = dash.daily_gauge(9800.0, 10000.0)      # -2% : moitie du seuil
+        g = dash.daily_gauge(9800.0, 10000.0)      # -2%: half the threshold
         self.assertEqual(g["pct"], -2.0)
         self.assertEqual(g["used"], 0.5)
         self.assertEqual(dash.daily_gauge(10400.0, 10000.0)["used"], 0.0)
@@ -122,24 +122,24 @@ class TestGaugeAndAccount(unittest.TestCase):
         fake_mt5.positions_get.return_value = []
         with mock.patch.object(dash, "BOTS_DIR", tempfile.mkdtemp()), \
              mock.patch.object(dash, "LOG_DIR", tempfile.mkdtemp()), \
-             mock.patch.object(dash, "TRADES_CSV", "introuvable.csv"):
-            self.assertTrue(dash.build_state(NOW)["marge_alerte"])
+             mock.patch.object(dash, "TRADES_CSV", "missing.csv"):
+            self.assertTrue(dash.build_state(NOW)["margin_alert"])
 
     def test_positions_filtered_by_magic(self):
         fake_mt5.positions_get.return_value = [
             SimpleNamespace(ticket=1, symbol="XAUUSD", type=0, volume=0.1,
                             profit=12.34, magic=1001),
             SimpleNamespace(ticket=2, symbol="EURUSD", type=1, volume=1.0,
-                            profit=-5.0, magic=777),        # etranger
+                            profit=-5.0, magic=777),        # foreign
         ]
         pos = dash.open_positions()
         self.assertEqual(len(pos), 1)
-        self.assertEqual(pos[0]["sens"], "LONG")
-        self.assertEqual(pos[0]["strategie"], "breakout")
+        self.assertEqual(pos[0]["side"], "LONG")
+        self.assertEqual(pos[0]["strategy"], "breakout")
 
 
 class TestWeather(unittest.TestCase):
-    """Meteo du bot 7 : lecture robuste + drapeau stale."""
+    """Bot 7's weather: robust read + stale flag."""
 
     def test_read_weather_missing_or_corrupt_is_none(self):
         with mock.patch.object(dash, "BOTS_DIR", tempfile.mkdtemp()):
@@ -149,26 +149,39 @@ class TestWeather(unittest.TestCase):
         d = tempfile.mkdtemp()
         with open(os.path.join(d, "macro_weather.json"), "w",
                   encoding="utf-8") as fh:
-            json.dump({"weather": "ORAGEUX", "confidence": 0.76,
+            json.dump({"weather": "STORMY", "confidence": 0.76,
                        "focus": "CPI", "date": "2026-07-15"}, fh)
         with mock.patch.object(dash, "BOTS_DIR", d):
             w = dash.read_weather(NOW)                # NOW = 2026-07-15
-            self.assertEqual(w["weather"], "ORAGEUX")
+            self.assertEqual(w["weather"], "STORMY")
             self.assertFalse(w["stale"])
             w2 = dash.read_weather(NOW + timedelta(days=3))
-            self.assertTrue(w2["stale"])              # meteo d'un autre jour
+            self.assertTrue(w2["stale"])              # weather of another day
 
-    def test_build_state_includes_meteo_none_as_skeleton(self):
+    def test_read_weather_migrates_legacy_french_file(self):
+        # macro_weather.json written before the English migration
+        d = tempfile.mkdtemp()
+        with open(os.path.join(d, "macro_weather.json"), "w",
+                  encoding="utf-8") as fh:
+            json.dump({"weather": "ORAGEUX", "confidence": 0.7,
+                       "focus": "CPI", "geo_resume": "risk premium",
+                       "date": "2026-07-15"}, fh)
+        with mock.patch.object(dash, "BOTS_DIR", d):
+            w = dash.read_weather(NOW)
+        self.assertEqual(w["weather"], "STORMY")
+        self.assertEqual(w["geo_summary"], "risk premium")
+
+    def test_build_state_includes_weather_none_as_skeleton(self):
         fake_mt5.account_info.return_value = None
         fake_mt5.positions_get.return_value = None
         with mock.patch.object(dash, "BOTS_DIR", tempfile.mkdtemp()), \
              mock.patch.object(dash, "LOG_DIR", tempfile.mkdtemp()), \
-             mock.patch.object(dash, "TRADES_CSV", "introuvable.csv"):
-            self.assertIsNone(dash.build_state(NOW)["meteo"])
+             mock.patch.object(dash, "TRADES_CSV", "missing.csv"):
+            self.assertIsNone(dash.build_state(NOW)["weather"])
 
 
 class TestActions(unittest.TestCase):
-    """PANIC (close all + verrou global) et FORCE RUN bot 7."""
+    """PANIC (close all + global lock) and FORCE RUN bot 7."""
 
     def setUp(self):
         self.client = TestClient(dash.app)
@@ -188,7 +201,7 @@ class TestActions(unittest.TestCase):
             SimpleNamespace(ticket=1, symbol="XAUUSD", type=0, volume=0.1,
                             profit=0.0, magic=1001),
             SimpleNamespace(ticket=2, symbol="EURUSD", type=1, volume=1.0,
-                            profit=0.0, magic=777),          # etranger
+                            profit=0.0, magic=777),          # foreign
         ]
         fake_mt5.symbol_info_tick.return_value = SimpleNamespace(
             ask=4100.0, bid=4099.5)
@@ -199,10 +212,10 @@ class TestActions(unittest.TestCase):
                                return_value=[]):
             r = self.client.post("/api/panic", auth=self.auth)
         self.assertEqual(r.status_code, 200)
-        self.assertIn("1 position(s) fermee(s)", r.text)
+        self.assertIn("1 position(s) closed", r.text)
         lock = dash.load_json(os.path.join(self.tmp,
                                            "orchestrator_state.json"))
-        self.assertTrue(lock["locked"])               # verrou global pose
+        self.assertTrue(lock["locked"])               # global lock engaged
 
     def test_forcerun_spawns_bot7_once(self):
         with mock.patch.object(dash.subprocess, "Popen") as popen:
@@ -215,7 +228,7 @@ class TestActions(unittest.TestCase):
 
 
 class TestMockMode(unittest.TestCase):
-    """--mock : donnees fictives sans MT5, actions desactivees."""
+    """--mock: fake data without MT5, actions disabled."""
 
     def test_mock_state_and_disabled_actions(self):
         client = TestClient(dash.app)
@@ -223,11 +236,11 @@ class TestMockMode(unittest.TestCase):
              mock.patch.object(dash, "_credentials",
                                return_value=("sentinel", "bon")):
             state = dash.build_state()
-            self.assertIn("MOCK", state["heure"])
+            self.assertIn("MOCK", state["time"])
             self.assertEqual(len(state["bots"]), 7)
-            self.assertEqual(state["meteo"]["weather"], "ORAGEUX")
+            self.assertEqual(state["weather"]["weather"], "STORMY")
             r = client.post("/api/panic", auth=("sentinel", "bon"))
-        self.assertIn("mode mock", r.text)
+        self.assertIn("mock mode", r.text)
 
 
 class TestAuth(unittest.TestCase):
@@ -249,8 +262,8 @@ class TestAuth(unittest.TestCase):
             r = self.client.get("/api/state", auth=("sentinel", "mauvais"))
         self.assertEqual(r.status_code, 401)
 
-    def test_live_fragment_sens_colors_distinct_from_pnl(self):
-        # LONG/SHORT en bleu/ambre : vert/rouge restent reserves au PnL.
+    def test_live_fragment_side_colors_distinct_from_pnl(self):
+        # LONG/SHORT in blue/amber: green/red stay reserved for PnL.
         fake_mt5.positions_get.return_value = [
             SimpleNamespace(ticket=1, symbol="XAUUSD", type=0, volume=0.1,
                             profit=12.34, magic=1001),

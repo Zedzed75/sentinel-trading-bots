@@ -1,144 +1,146 @@
-﻿# Sentinel Trading Bots
+# Sentinel Trading Bots
 
-Flotte de bots de trading algorithmique MetaTrader 5 (Pepperstone),
-independants, concus en TDD. Compte demo recommande.
+Fleet of independent MetaTrader 5 algorithmic trading bots (Pepperstone),
+built with TDD. Demo account recommended.
 
 ## Structure
 
 ```
-bots/     les 7 bots (sans imports croises) + modules purs
+bots/     the 7 bots (no cross-imports) + pure modules
           (sentinel_signals.py bot 1, sentinel_macro_sources.py bot 7)
-tests/    les 10 suites de tests (211 tests, MT5 mocke)
-docs/     ARCHITECTURE.md (le code), STRATEGIE.md (l'investissement),
-          AMELIORATION_CONTINUE.md (mesure et correction des strategies)
-research/ backtest_sentinel.py (rejoue les regles des bots sur
-          l'historique broker, grilles anti sur-ajustement)
-sentinel_dashboard.py + templates/  dashboard web mobile (lecture seule)
+tests/    the 10 test suites (214 tests, MT5 mocked)
+docs/     ARCHITECTURE.md (the code), STRATEGIE.md (the investing),
+          AMELIORATION_CONTINUE.md (strategy measurement and correction)
+research/ backtest_sentinel.py (replays the bots' rules on broker
+          history, anti-overfitting grids)
+sentinel_dashboard.py + templates/  mobile web dashboard (read-only)
 ```
 
 ## Bots
 
-| Fichier | Strategie | Risque | Coupe-circuit |
+| File | Strategy | Risk | Circuit breaker |
 |---|---|---|---|
-| `sentinel_bot.py` | Breakout M30 (plage asiatique) sur XAUUSD uniquement (suspendu sur EURUSD/GBPUSD le 2026-07-15, cf. AMELIORATION_CONTINUE.md) + Mean Reversion M5 (Bollinger/RSI) sur les trois actifs ; filtre VIX asymetrique (or uniquement) | 1.5% du solde/trade, SL=1.5xATR(14) M30, TP 1:2, partiel 50% + break-even a 1R | -4% d'equite/jour (reference 00:00 UTC), verrou jusqu'au lendemain |
-| `sentinel_alpha_compound.py` | Stat-arb : cointegration Brent/WTI (test ADF), entree a \|z\|>=2, sortie convergence/stop temporel 48xM15/stop 4 sigma | Half-Kelly dynamique sur l'equite (plafond 5%, plancher 1% avant 10 trades) | -15% du pic d'equite historique, verrou permanent |
-| `sentinel_trend.py` | Suivi de tendance (time-series momentum) : cassure Donchian 55 H4, sortie canal 20 oppose, sur XAUUSD, EURUSD, GBPUSD, US500, XTIUSD | 1% de l'equite/trade (0.5% sur EURUSD/GBPUSD/XTIUSD depuis le 2026-07-15, cf. AMELIORATION_CONTINUE.md), SL dur 2xATR(14), pas de TP | -15% du pic d'equite historique, verrou permanent |
-| `sentinel_risk_orchestrator.py` | Ne trade pas : vol targeting 10% annualise (ecrit `risk_scale.json`, applique par tous les bots), alerte de concentration directionnelle | reduit les tailles quand la vol du compte monte (plancher 0.25) | -10% GLOBAL du pic d'equite : ferme toute la flotte (magics Sentinel uniquement), verrou permanent |
-| `sentinel_trade_analytics.py` | Ne trade pas : reconstitue les trades fermes depuis l'historique MT5 (magics Sentinel) et publie `logs/trades.csv` + `logs/analytics.html` (win rate, profit factor, expectancy, max DD par strategie/symbole sur 7j/30j/total, plus la ventilation par heure d'ouverture UTC) | aucun (lecture seule) | aucun |
-| `sentinel_macro_analyst.py` | Ne trade pas, ne touche pas a MT5 : "meteo du marche" quotidienne multi-agents — ingere a 08h00 UTC trois familles de sources (geopolitique/energie avec surveillance des goulots type Ormuz/mer Rouge, declarations d'influenceurs filtrees par actifs, calendrier economique), plus les notes sell-side des bank desks (GS, JPM, MS, Citi via FT/FXStreet/Google News), reunit un conseil de 4 agents LLM specialises (Geo/Macro sur claude-fable-5 effort low avec fallback serveur opus, Sentiment/Flux sur claude-haiku-4-5, mapping surchargeable via macro_config.json) tranche par un juge claude-opus-4-8 (JSON structure) ; sobriete de tokens : dossiers sectorises par agent, limites de mots, max_tokens 4000, ecrit `bots/macro_weather.json` + l'archive quotidienne `bots/macro_history.json` (upsert par date, pour la validation statistique meteo x PnL) et envoie le rapport Telegram a 08h30 UTC. Informatif : aucun sizing modifie (roadmap 4). Repli NEUTRE automatique sur toute panne | aucun (lecture seule) | aucun |
-| `sentinel_telegram.py` | Ne trade pas : notifications Telegram (ouvertures, clotures avec PnL, coupe-circuits, rapport quotidien 18h UTC avec rappel des couples suspendus/reduits et de leur echeance de reevaluation) et commandes `/status` (equite, positions, verrous avec echeance, fenetres d'entree ouvertes/fermees par strategie, processus) et `/pnl` (gains/pertes jour/7j/30j/total par strategie) | aucun (lecture seule) | aucun |
+| `sentinel_bot.py` | M30 breakout (Asian range) on XAUUSD only (suspended on EURUSD/GBPUSD on 2026-07-15, see AMELIORATION_CONTINUE.md) + M5 Mean Reversion (Bollinger/RSI) on all three assets; asymmetric VIX filter (gold only) | 1.5% of balance/trade, SL=1.5xATR(14) M30, TP 1:2, 50% partial + break-even at 1R | -4% equity/day (00:00 UTC reference), locked until the next day |
+| `sentinel_alpha_compound.py` | Stat-arb: Brent/WTI cointegration (ADF test), entry at \|z\|>=2, exit convergence/48xM15 time stop/4-sigma stop | Dynamic Half-Kelly on equity (5% cap, 1% floor before 10 trades) | -15% of the historical equity peak, permanent lock |
+| `sentinel_trend.py` | Trend following (time-series momentum): Donchian 55 H4 breakout, opposite channel 20 exit, on XAUUSD, EURUSD, GBPUSD, US500, XTIUSD | 1% of equity/trade (0.5% on EURUSD/GBPUSD/XTIUSD since 2026-07-15, see AMELIORATION_CONTINUE.md), hard SL 2xATR(14), no TP | -15% of the historical equity peak, permanent lock |
+| `sentinel_risk_orchestrator.py` | Does not trade: 10% annualized vol targeting (writes `risk_scale.json`, applied by all bots), directional concentration alert | reduces sizes when account vol rises (0.25 floor) | -10% GLOBAL from the equity peak: closes the whole fleet (Sentinel magics only), permanent lock |
+| `sentinel_trade_analytics.py` | Does not trade: rebuilds closed trades from the MT5 history (Sentinel magics) and publishes `logs/trades.csv` + `logs/analytics.html` (win rate, profit factor, expectancy, max DD per strategy/symbol over 7d/30d/total, plus the breakdown by UTC open hour) | none (read-only) | none |
+| `sentinel_macro_analyst.py` | Does not trade, never touches MT5: daily multi-agent "market weather" — ingests at 08:00 UTC three source families (geopolitics/energy with chokepoint watch (Hormuz/Red Sea), influencer statements filtered by assets, economic calendar), plus sell-side bank-desk notes (GS, JPM, MS, Citi via FT/FXStreet/Google News), convenes a council of 4 specialized LLM agents (Geo/Macro on claude-fable-5 low effort with server-side opus fallback, Sentiment/Flow on claude-haiku-4-5, mapping overridable via macro_config.json) decided by a claude-opus-4-8 judge (structured JSON); token economy: per-agent sectorized dossiers, word limits, max_tokens 4000, writes `bots/macro_weather.json` + the daily archive `bots/macro_history.json` (upsert by date, for the weather x PnL statistical validation) and sends the Telegram report at 08:30 UTC. Informational: no sizing modified (roadmap 4). Automatic NEUTRAL fallback on any failure | none (read-only) | none |
+| `sentinel_telegram.py` | Does not trade: Telegram notifications (opens, closes with PnL, circuit breakers, 18:00 UTC daily report with a reminder of suspended/reduced pairs and their review deadline) and commands `/status` (equity, positions, locks with deadline, entry windows open/closed per strategy, processes) and `/pnl` (profit/loss day/7d/30d/total per strategy) | none (read-only) | none |
 
-## Utilisation
+## Usage
 
 ```
 pip install -r requirements.txt
-python bots/sentinel_risk_orchestrator.py   # bot 4 d'abord (pose risk_scale.json)
-python bots/sentinel_bot.py                 # bot 1 (multi-actifs intraday)
-python bots/sentinel_alpha_compound.py      # bot 2 (spread Brent/WTI)
-python bots/sentinel_trend.py               # bot 3 (trend-following H4)
-python bots/sentinel_trade_analytics.py     # bot 5 (analyse des trades)
-python bots/sentinel_telegram.py            # bot 6 (notifications mobile)
-python bots/sentinel_macro_analyst.py       # bot 7 (meteo macro quotidienne)
+python bots/sentinel_risk_orchestrator.py   # bot 4 first (writes risk_scale.json)
+python bots/sentinel_bot.py                 # bot 1 (intraday multi-asset)
+python bots/sentinel_alpha_compound.py      # bot 2 (Brent/WTI spread)
+python bots/sentinel_trend.py               # bot 3 (H4 trend following)
+python bots/sentinel_trade_analytics.py     # bot 5 (trade analysis)
+python bots/sentinel_telegram.py            # bot 6 (mobile notifications)
+python bots/sentinel_macro_analyst.py       # bot 7 (daily macro weather)
 ```
 
-### Meteo macro (bot 7)
+### Macro weather (bot 7)
 
-Copier `bots/macro_config.example.json` vers `bots/macro_config.json`
-(gitignore) et y mettre une cle API Anthropic (ou definir
-`ANTHROPIC_API_KEY`). Test manuel : `python bots/sentinel_macro_analyst.py
---once` (pipeline immediat + envoi). Sans cle, le bot attend passivement.
+Copy `bots/macro_config.example.json` to `bots/macro_config.json`
+(gitignored) and put an Anthropic API key in it (or define
+`ANTHROPIC_API_KEY`). Manual test: `python bots/sentinel_macro_analyst.py
+--once` (immediate pipeline + send). Without a key, the bot waits
+passively.
 
-### Dashboard mobile (sentinel_dashboard.py)
+### Mobile dashboard (sentinel_dashboard.py)
 
-Page web mobile-first (FastAPI + Jinja2 + DaisyUI/HTMX via CDN, theme
-forest, fragment live rafraichi toutes les 10 s) : header meteo dynamique
-du bot 7 (rouge ORAGEUX / vert CALME / gris NEUTRE + confiance + focus),
-onglets Debat/Bank Targets/Conflit, balance/equite/marge (alerte < 150%),
-statut RUNNING/STOPPED et PnL du jour des 7 bots, jauge du coupe-circuit
--4%, positions ouvertes, CPU/RAM/watchdog. Deux actions protegees par
-confirmation : 🚨 PANIC (ferme toutes les positions Sentinel et pose le
-verrou GLOBAL — deverrouillage humain) et 🔄 FORCE RUN bot 7 (meteo
-immediate). Fichiers absents/corrompus => squelettes gris, jamais de 500.
-Test local sans MT5 : `python sentinel_dashboard.py --mock`.
+Mobile-first web page (FastAPI + Jinja2 + DaisyUI/HTMX via CDN, forest
+theme, live fragment refreshed every 10 s): bot 7's dynamic weather
+header (red STORMY / green CALM / grey NEUTRAL + confidence + focus),
+Debate/Bank Targets/Conflict tabs, balance/equity/margin (alert < 150%),
+RUNNING/STOPPED status and day PnL of the 7 bots, -4% circuit-breaker
+gauge, open positions, CPU/RAM/watchdog. Two confirmation-protected
+actions: 🚨 PANIC (closes all Sentinel positions and engages the GLOBAL
+lock — human unlock) and 🔄 FORCE RUN bot 7 (immediate weather). Missing/
+corrupt files => grey skeletons, never a 500.
+Local test without MT5: `python sentinel_dashboard.py --mock`.
 
-1. Copier `dashboard_config.example.json` vers `dashboard_config.json`
-   (gitignore) et definir un mot de passe fort : le serveur refuse de
-   demarrer sans, et tout acces exige ce Basic Auth.
-2. `python sentinel_dashboard.py [port]` (defaut 8787), puis ouvrir
-   `http://<ip>:<port>/` sur le telephone.
-3. Hors reseau local, servir en HTTPS (`uvicorn sentinel_dashboard:app
-   --ssl-keyfile ... --ssl-certfile ...`) ou passer par un tunnel/VPN ;
-   ne jamais exposer le Basic Auth en HTTP sur Internet.
+1. Copy `dashboard_config.example.json` to `dashboard_config.json`
+   (gitignored) and set a strong password: the server refuses to start
+   without one, and every access requires this Basic Auth.
+2. `python sentinel_dashboard.py [port]` (default 8787), then open
+   `http://<ip>:<port>/` on the phone.
+3. Outside the local network, serve over HTTPS (`uvicorn
+   sentinel_dashboard:app --ssl-keyfile ... --ssl-certfile ...`) or use
+   a tunnel/VPN; never expose the Basic Auth over HTTP on the Internet.
 
 ### Telegram (bot 6)
 
-1. Sur Telegram, parler a `@BotFather` : `/newbot`, choisir un nom, copier
-   le token.
-2. Copier `bots/telegram_config.example.json` vers
-   `bots/telegram_config.json` et y coller le token (fichier gitignore,
-   jamais commite).
-3. Envoyer `/start` au bot cree : le chat est enregistre automatiquement,
-   les notifications et commandes (`/status`, `/pnl`) sont actives.
+1. On Telegram, talk to `@BotFather`: `/newbot`, pick a name, copy the
+   token.
+2. Copy `bots/telegram_config.example.json` to
+   `bots/telegram_config.json` and paste the token (gitignored file,
+   never committed).
+3. Send `/start` to the created bot: the chat is registered
+   automatically, notifications and commands (`/status`, `/pnl`) are
+   active.
 
-Le watchdog envoie aussi une alerte Telegram a chaque relance d'un bot.
+The watchdog also sends a Telegram alert on every bot restart.
 
-Prerequis : terminal MT5 Pepperstone installe (chemin dans `main()`),
-"Algo Trading" active. Une seule instance de chaque bot a la fois.
+Prerequisites: Pepperstone MT5 terminal installed (path in `main()`),
+"Algo Trading" enabled. Only one instance of each bot at a time.
 
-Les fichiers `*_state.json` (references de balance, historique Kelly,
-verrous) sont crees au premier cycle et ne se versionnent pas ; toutes
-les ecritures d'etat sont atomiques (temporaire + rename).
+The `*_state.json` files (balance references, Kelly history, locks) are
+created on the first cycle and are not versioned; all state writes are
+atomic (temp file + rename).
 
-Chaque bot ecrit `logs/<bot>.hb` apres chaque cycle reussi : le watchdog
-relance un processus vivant mais gele (heartbeat trop vieux), avec alerte
-Telegram.
+Each bot writes `logs/<bot>.hb` after each successful cycle: the
+watchdog restarts a process that is alive but frozen (heartbeat too
+old), with a Telegram alert.
 
-Fenetres horaires (UTC reel, bougies serveur converties automatiquement) :
-breakout 08:00-16:00 et reversion 13:00-18:00 (bot 1), nouvelles entrees
-07:00-20:00 (bot 2), pas d'ouverture 21:00-23:00 (bot 3, rollover). Les
-sorties et coupe-circuits ne sont jamais bloques par une fenetre.
-`FORCE_TRADING_HOURS` (sentinel_bot.py) : `True` = bypass des fenetres du
-bot 1 pour les tests en direct ; laisser a `False` en production.
+Trading windows (real UTC, server candles converted automatically):
+breakout 08:00-16:00 and reversion 13:00-18:00 (bot 1), new entries
+07:00-20:00 (bot 2), no opening 21:00-23:00 (bot 3, rollover). Exits
+and circuit breakers are never blocked by a window.
+`FORCE_TRADING_HOURS` (sentinel_bot.py): `True` = bypass bot 1's
+windows for live testing; keep `False` in production.
 
 ## Tests
 
-211 tests, MT5, yfinance, psutil et LLM mockes (executables sans terminal) :
+214 tests, MT5, yfinance, psutil and LLM mocked (runnable without a
+terminal):
 
 ```
 python -m unittest discover -s tests -v
 ```
 
-La CI (GitHub Actions, `windows-latest`) les execute a chaque push.
+The CI (GitHub Actions, `windows-latest`) runs them on every push.
 
-## Regles de contribution (protection de branche)
+## Contribution rules (branch protection)
 
-La branche `master` est protegee :
+The `master` branch is protected:
 
-1. **Aucun push direct sur `master`** : tout changement passe par une
-   branche puis une pull request.
-2. **Une validation (review approuvee) est requise** pour merger une PR ;
-   une nouvelle serie de commits invalide les approbations precedentes.
-3. **La CI doit etre verte** (job `test`, la suite complete) avant le merge,
-   et la branche doit etre a jour avec `master`.
-4. **Force-push et suppression de `master` interdits.**
+1. **No direct push to `master`**: every change goes through a branch
+   then a pull request.
+2. **One validation (approved review) is required** to merge a PR; a new
+   series of commits invalidates previous approvals.
+3. **The CI must be green** (the `test` job, the full suite) before the
+   merge, and the branch must be up to date with `master`.
+4. **Force-push and deletion of `master` are forbidden.**
 
-Ces regles s'appliquent a **tout le monde, administrateurs compris**
-(enforce_admins actif). L'auteur d'une PR ne peut pas approuver sa
-propre PR.
+These rules apply to **everyone, administrators included**
+(enforce_admins active). A PR's author cannot approve their own PR.
 
-**Validation de secours (absence d'autre dev)** : un administrateur peut
-apposer le label `validation-solo` sur la PR ; le workflow
-`validation-solo.yml` fait alors approuver la PR par le bot
-`github-actions`. La pose du label est l'acte de validation (tracee dans
-la PR) ; la CI reste obligatoire. En dernier recours absolu,
-l'administrateur peut suspendre temporairement la protection dans
-Settings > Branches, puis la reactiver immediatement apres.
+**Backup validation (no other dev available)**: an administrator can
+apply the `validation-solo` label to the PR; the `validation-solo.yml`
+workflow then has the `github-actions` bot approve the PR. Applying the
+label is the act of validation (traced in the PR); the CI remains
+mandatory. As an absolute last resort, the administrator can temporarily
+suspend the protection in Settings > Branches, then re-enable it
+immediately afterwards.
 
-Workflow type :
+Typical workflow:
 
 ```
-git checkout -b feature/ma-modif
+git checkout -b feature/my-change
 # ... commits ...
-git push -u origin feature/ma-modif
-gh pr create            # puis review + CI verte -> merge
+git push -u origin feature/my-change
+gh pr create            # then review + green CI -> merge
 ```

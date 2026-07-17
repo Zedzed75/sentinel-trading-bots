@@ -1,14 +1,14 @@
-"""SENTINEL - Bot de trading algorithmique MetaTrader 5 multi-actifs.
+"""SENTINEL - Multi-asset MetaTrader 5 algorithmic trading bot.
 
-Portefeuille : XAUUSD, EURUSD, GBPUSD (cf. CONFIG_PORTFOLIO).
-Strategies (appliquees a chaque actif) :
-  A) Breakout de session asiatique (M30), filtre macro VIX.
-  B) Mean Reversion Bollinger/RSI (M5) en phase de range.
-Risque : 1.5% du solde par trade, SL = 1.5*ATR(14) M30, TP = 2*SL,
-partiel 50% + break-even a 1R, coupe-circuit drawdown journalier 4%.
+Portfolio: XAUUSD, EURUSD, GBPUSD (see CONFIG_PORTFOLIO).
+Strategies (applied to each asset):
+  A) Asian session breakout (M30), VIX macro filter.
+  B) Bollinger/RSI mean reversion (M5) during range phases.
+Risk: 1.5% of balance per trade, SL = 1.5*ATR(14) M30, TP = 2*SL,
+50% partial + break-even at 1R, 4% daily drawdown circuit breaker.
 
-Les fonctions pures (indicateurs, signaux, fenetres horaires) vivent dans
-sentinel_signals.py ; ce fichier porte le risque, l'acces MT5 et la boucle.
+Pure functions (indicators, signals, trading windows) live in
+sentinel_signals.py; this file owns risk, MT5 access and the main loop.
 """
 
 import json
@@ -31,15 +31,15 @@ from sentinel_signals import (
 # ----------------------------------------------------------------------------
 # Configuration
 # ----------------------------------------------------------------------------
-# Portefeuille : nom canonique -> magics + symboles de repli broker
-# (Pepperstone Razor expose le suffixe .p ; le nom canonique est teste d'abord)
-# vix_filter : True = bloquer les SELL si VIX > 25 (valeur refuge, or
-# uniquement) ; False = shorts autorises en crise (paires forex vs USD)
-# breakout : False = strategie A suspendue sur l'actif (la reversion
-# continue). EURUSD et GBPUSD suspendus le 2026-07-15 : PF < 1 sur les
-# deux moities du backtest, ~650 trades chacun (structurel, pas un
-# parametre - docs/AMELIORATION_CONTINUE.md, section 5). Reevaluation
-# trimestrielle prevue.
+# Portfolio: canonical name -> magics + broker fallback symbols
+# (Pepperstone Razor exposes the .p suffix; the canonical name is tried first)
+# vix_filter: True = block SELLs when VIX > 25 (safe-haven asset, gold
+# only); False = shorts allowed during crises (forex pairs vs USD)
+# breakout: False = strategy A suspended on the asset (reversion keeps
+# running). EURUSD and GBPUSD suspended on 2026-07-15: PF < 1 on both
+# halves of the backtest, ~650 trades each (structural, not a
+# parameter - docs/AMELIORATION_CONTINUE.md, section 5). Quarterly
+# re-evaluation planned.
 CONFIG_PORTFOLIO = {
     "XAUUSD": {"magic_breakout": 1001, "magic_reversion": 1002,
                "fallback": ["XAUUSD.p", "GOLD"], "vix_filter": True,
@@ -52,14 +52,14 @@ CONFIG_PORTFOLIO = {
                "breakout": False},
 }
 
-RISK_PCT = 0.015              # 1.5% du solde par trade
-ATR_SL_MULT = 1.5             # Distance_SL = 1.5 * ATR(14) M30
-RR_RATIO = 2.0                # TP = 2 * Distance_SL
-DAILY_DD_LIMIT = 0.04         # coupe-circuit a -4% d'equite vs balance du jour
+RISK_PCT = 0.015              # 1.5% of balance per trade
+ATR_SL_MULT = 1.5             # SL_distance = 1.5 * ATR(14) M30
+RR_RATIO = 2.0                # TP = 2 * SL_distance
+DAILY_DD_LIMIT = 0.04         # circuit breaker at -4% equity vs day balance
 
 VIX_TICKER = "^VIX"
 
-DEVIATION = 20                # slippage max en points
+DEVIATION = 20                # max slippage in points
 STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                           "sentinel_state.json")
 RISK_SCALE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -69,11 +69,11 @@ log = logging.getLogger("sentinel")
 
 
 # ----------------------------------------------------------------------------
-# Gestion du risque (fonctions pures, testables)
+# Risk management (pure, testable functions)
 # ----------------------------------------------------------------------------
 def reached_one_r(pos_type: int, price_open: float, sl: float,
                   current: float) -> bool:
-    """True si la position a atteint un profit de 1R (distance du SL initial)."""
+    """True if the position reached a 1R profit (initial SL distance)."""
     risk = abs(price_open - sl)
     if risk <= 0:
         return False
@@ -83,7 +83,7 @@ def reached_one_r(pos_type: int, price_open: float, sl: float,
 
 
 def save_json_atomic(path: str, payload: dict):
-    """Temporaire + os.replace : l'etat precedent survit a un crash."""
+    """Temp file + os.replace: the previous state survives a crash."""
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as fh:
         json.dump(payload, fh)
@@ -97,8 +97,9 @@ HEARTBEAT_FILE = os.path.join(
 
 def write_heartbeat(path: str = HEARTBEAT_FILE,
                     now: datetime | None = None):
-    """Estampille de vie apres chaque cycle reussi (lue par le watchdog) :
-    un processus vivant mais gele (reconnexion sans fin) sera relance."""
+    """Liveness timestamp after each successful cycle (read by the
+    watchdog): a process that is alive but frozen (endless reconnect)
+    will be restarted."""
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w", encoding="utf-8") as fh:
@@ -108,7 +109,7 @@ def write_heartbeat(path: str = HEARTBEAT_FILE,
 
 
 def read_risk_scale(path: str | None = None) -> float:
-    """Facteur [0,1] ecrit par l'orchestrateur de risque ; 1.0 par defaut."""
+    """[0,1] factor written by the risk orchestrator; defaults to 1.0."""
     try:
         with open(path or RISK_SCALE_FILE, encoding="utf-8") as fh:
             return min(1.0, max(0.0, float(json.load(fh)["scale"])))
@@ -119,7 +120,7 @@ def read_risk_scale(path: str | None = None) -> float:
 def compute_lot(balance: float, sl_distance: float, tick_size: float,
                 tick_value: float, vol_min: float, vol_max: float,
                 vol_step: float, scale: float = 1.0) -> float:
-    """Volume risquant RISK_PCT du solde (x echelle globale de risque)."""
+    """Volume risking RISK_PCT of the balance (x global risk scale)."""
     if sl_distance <= 0 or tick_size <= 0 or tick_value <= 0:
         return 0.0
     loss_per_lot = (sl_distance / tick_size) * tick_value
@@ -132,7 +133,7 @@ def compute_lot(balance: float, sl_distance: float, tick_size: float,
 
 
 # ----------------------------------------------------------------------------
-# Filtre macro VIX (yfinance, un fetch par jour)
+# VIX macro filter (yfinance, one fetch per day)
 # ----------------------------------------------------------------------------
 class MacroFilter:
     def __init__(self):
@@ -147,19 +148,19 @@ class MacroFilter:
             hist = yf.Ticker(VIX_TICKER).history(period="5d")
             self._vix = float(hist["Close"].iloc[-1])
             self._date = today
-            log.info("VIX du jour : %.2f", self._vix)
+            log.info("Today's VIX: %.2f", self._vix)
         except Exception as exc:
-            log.warning("Echec recuperation VIX (%s) - SELL bloques.", exc)
+            log.warning("VIX fetch failed (%s) - SELLs blocked.", exc)
             self._vix = None
             self._date = today
         return self._vix
 
 
 # ----------------------------------------------------------------------------
-# Coupe-circuit drawdown journalier
+# Daily drawdown circuit breaker
 # ----------------------------------------------------------------------------
 class DayGuard:
-    """Balance de reference a 00:00 UTC, verrou si equite <= -4%."""
+    """Reference balance at 00:00 UTC, lock if equity <= -4%."""
 
     def __init__(self, state_file: str = STATE_FILE):
         self.state_file = state_file
@@ -185,54 +186,54 @@ class DayGuard:
                               "day_balance": self.day_balance,
                               "locked": self.locked})
         except OSError as exc:
-            log.warning("Echec sauvegarde etat : %s", exc)
+            log.warning("State save failed: %s", exc)
 
     def roll_day(self, now: datetime, balance: float):
-        """A appeler a chaque tick : reinitialise a chaque nouveau jour UTC."""
+        """Call on every tick: resets on each new UTC day."""
         today = now.date().isoformat()
         if self.day != today:
             self.day = today
             self.day_balance = balance
             self.locked = False
             self._save()
-            log.info("Nouveau jour UTC %s - balance de reference %.2f",
+            log.info("New UTC day %s - reference balance %.2f",
                      today, balance)
 
     def check(self, equity: float) -> bool:
-        """True si le coupe-circuit doit se declencher (ou est deja actif)."""
+        """True if the circuit breaker must trigger (or is already active)."""
         if self.locked:
             return True
         if self.day_balance and equity <= self.day_balance * (1 - DAILY_DD_LIMIT):
             self.locked = True
             self._save()
-            log.error("COUPE-CIRCUIT : equite %.2f <= -4%% de %.2f. "
-                      "Bot verrouille jusqu'a 00:00 UTC.",
+            log.error("CIRCUIT BREAKER: equity %.2f <= -4%% of %.2f. "
+                      "Bot locked until 00:00 UTC.",
                       equity, self.day_balance)
             return True
         return False
 
 
 # ----------------------------------------------------------------------------
-# Acces MT5
+# MT5 access
 # ----------------------------------------------------------------------------
 def connect() -> bool:
     if not mt5.initialize(path="C:/Program Files/Pepperstone MetaTrader 5/terminal64.exe"):
-        log.error("mt5.initialize() a echoue : %s", mt5.last_error())
+        log.error("mt5.initialize() failed: %s", mt5.last_error())
         return False
     info = mt5.account_info()
     if info is None:
-        log.error("account_info() a echoue : %s", mt5.last_error())
+        log.error("account_info() failed: %s", mt5.last_error())
         return False
-    log.info("Connecte MT5 - compte %s, balance %.2f %s",
+    log.info("Connected to MT5 - account %s, balance %.2f %s",
              info.login, info.balance, info.currency)
     return True
 
 
 def resolve_symbols() -> dict:
-    """Valide chaque actif du portefeuille (nom canonique puis replis).
+    """Validate each portfolio asset (canonical name then fallbacks).
 
-    Retourne {nom: {"symbol": symbole broker, "magic_breakout", "magic_reversion"}}.
-    Un actif absent chez le broker est retire avec un WARNING, sans bloquer.
+    Returns {name: {"symbol": broker symbol, "magic_breakout", "magic_reversion"}}.
+    An asset missing at the broker is dropped with a WARNING, without blocking.
     """
     active = {}
     for name, cfg in CONFIG_PORTFOLIO.items():
@@ -245,12 +246,12 @@ def resolve_symbols() -> dict:
                             "magic_reversion": cfg["magic_reversion"],
                             "vix_filter": cfg.get("vix_filter", True),
                             "breakout": cfg.get("breakout", True)}
-            log.info("Actif %s -> symbole broker %s%s", name, found,
+            log.info("Asset %s -> broker symbol %s%s", name, found,
                      "" if active[name]["breakout"]
-                     else " (breakout suspendu)")
+                     else " (breakout suspended)")
         else:
-            log.warning("Actif %s indisponible chez le broker, retire du "
-                        "portefeuille : %s", name, mt5.last_error())
+            log.warning("Asset %s unavailable at the broker, removed from "
+                        "the portfolio: %s", name, mt5.last_error())
     return active
 
 
@@ -258,13 +259,13 @@ _SERVER_OFFSET = {"hours": 0.0, "at": None}
 
 
 def server_offset_hours(symbol: str, now: datetime | None = None) -> float:
-    """Decalage (heures) entre l'horloge du serveur MT5 et l'UTC reel.
+    """Offset (hours) between the MT5 server clock and real UTC.
 
-    Les bougies MT5 sont estampillees en heure serveur (UTC+2/+3 chez
-    Pepperstone) : sans conversion, toutes les fenetres horaires (plage
-    asiatique en tete) seraient decalees. On mesure l'ecart entre un tick
-    recent et l'horloge locale UTC, arrondi a la demi-heure, memorise 1 h.
-    Sans tick frais (week-end), la derniere valeur connue est conservee.
+    MT5 candles are stamped in server time (UTC+2/+3 at Pepperstone):
+    without conversion, every trading window (the Asian range first)
+    would be shifted. We measure the gap between a recent tick and the
+    local UTC clock, rounded to the half hour, cached for 1 h. Without
+    a fresh tick (week-end), the last known value is kept.
     """
     now = now or datetime.now(timezone.utc)
     cache = _SERVER_OFFSET
@@ -273,7 +274,7 @@ def server_offset_hours(symbol: str, now: datetime | None = None) -> float:
     ts = getattr(mt5.symbol_info_tick(symbol), "time", None)
     if isinstance(ts, (int, float)) and ts > 0:
         delta_h = (ts - now.timestamp()) / 3600
-        if abs(delta_h) <= 13:            # tick frais, offset plausible
+        if abs(delta_h) <= 13:            # fresh tick, plausible offset
             cache["hours"] = round(delta_h * 2) / 2
             cache["at"] = now
     return cache["hours"]
@@ -282,7 +283,7 @@ def server_offset_hours(symbol: str, now: datetime | None = None) -> float:
 def get_rates(symbol: str, timeframe: int, count: int) -> pd.DataFrame | None:
     rates = mt5.copy_rates_from_pos(symbol, timeframe, 0, count)
     if rates is None or len(rates) == 0:
-        log.warning("copy_rates_from_pos vide (%s tf=%s) : %s",
+        log.warning("copy_rates_from_pos empty (%s tf=%s): %s",
                     symbol, timeframe, mt5.last_error())
         return None
     df = pd.DataFrame(rates)
@@ -294,35 +295,35 @@ def get_rates(symbol: str, timeframe: int, count: int) -> pd.DataFrame | None:
 def send_order(request: dict):
     result = mt5.order_send(request)
     if result is None:
-        log.error("order_send None : %s", mt5.last_error())
+        log.error("order_send None: %s", mt5.last_error())
         return None
     if result.retcode != mt5.TRADE_RETCODE_DONE:
-        log.error("Ordre refuse retcode=%s comment=%s",
+        log.error("Order rejected retcode=%s comment=%s",
                   result.retcode, getattr(result, "comment", ""))
         return None
     return result
 
 
 def open_trade(symbol: str, direction: str, magic: int, tag: str) -> bool:
-    """Ouvre un trade au marche avec SL/TP obligatoires et lot dynamique."""
+    """Open a market trade with mandatory SL/TP and dynamic lot size."""
     acc = mt5.account_info()
     sym = mt5.symbol_info(symbol)
     tick = mt5.symbol_info_tick(symbol)
     df_m30 = get_rates(symbol, mt5.TIMEFRAME_M30, 100)
     if acc is None or sym is None or tick is None or df_m30 is None:
-        log.error("Donnees indisponibles pour ouvrir un trade : %s",
+        log.error("Data unavailable to open a trade: %s",
                   mt5.last_error())
         return False
     sl_dist = ATR_SL_MULT * float(atr(df_m30).iloc[-1])
     if sl_dist <= 0:
-        log.warning("ATR nul, trade ignore.")
+        log.warning("Zero ATR, trade skipped.")
         return False
     lot = compute_lot(acc.balance, sl_dist, sym.trade_tick_size,
                       sym.trade_tick_value, sym.volume_min,
                       sym.volume_max, sym.volume_step, read_risk_scale())
     if lot <= 0:
-        log.warning("Lot calcule nul (solde %.2f, SL %.2f), trade ignore.",
-                    acc.balance, sl_dist)
+        log.warning("Computed lot is zero (balance %.2f, SL %.2f), "
+                    "trade skipped.", acc.balance, sl_dist)
         return False
     if direction == "BUY":
         order_type, price = mt5.ORDER_TYPE_BUY, tick.ask
@@ -353,7 +354,7 @@ def has_open_position(symbol: str, magic: int) -> bool:
 
 
 def close_position(pos, volume: float | None = None) -> bool:
-    """Cloture totale ou partielle d'une position par ordre inverse."""
+    """Full or partial close of a position via an opposite order."""
     tick = mt5.symbol_info_tick(pos.symbol)
     if tick is None:
         return False
@@ -380,11 +381,11 @@ def move_sl_to_breakeven(pos) -> bool:
 
 
 def manage_positions(symbol: str, magics: tuple):
-    """A 1R : cloture 50% + break-even, strictement par symbole ET magic."""
+    """At 1R: close 50% + break-even, strictly per symbol AND magic."""
     for pos in mt5.positions_get(symbol=symbol) or []:
         if pos.symbol != symbol or pos.magic not in magics:
             continue
-        if pos.sl == pos.price_open:      # deja passe en break-even
+        if pos.sl == pos.price_open:      # already moved to break-even
             continue
         if not pos.sl:
             continue
@@ -395,41 +396,41 @@ def manage_positions(symbol: str, magics: tuple):
             half = round(half, 8)
             if half >= (sym.volume_min if sym else 0.01):
                 if close_position(pos, half):
-                    log.info("Position %s : 50%% cloture a 1R (%.2f lots).",
+                    log.info("Position %s: 50%% closed at 1R (%.2f lots).",
                              pos.ticket, half)
             if move_sl_to_breakeven(pos):
-                log.info("Position %s : SL deplace au break-even %s.",
+                log.info("Position %s: SL moved to break-even %s.",
                          pos.ticket, fp(symbol, pos.price_open))
 
 
 def close_everything():
-    """Coupe-circuit GLOBAL : ferme tout, tous symboles, annule tout ordre."""
+    """GLOBAL circuit breaker: close everything, all symbols, cancel all orders."""
     for pos in mt5.positions_get() or []:
         if close_position(pos):
-            log.info("Coupe-circuit : position %s (%s) fermee.",
+            log.info("Circuit breaker: position %s (%s) closed.",
                      pos.ticket, pos.symbol)
     for order in mt5.orders_get() or []:
         send_order({"action": mt5.TRADE_ACTION_REMOVE, "order": order.ticket})
-        log.info("Coupe-circuit : ordre en attente %s annule.", order.ticket)
+        log.info("Circuit breaker: pending order %s cancelled.", order.ticket)
 
 
 # ----------------------------------------------------------------------------
-# Boucle principale
+# Main loop
 # ----------------------------------------------------------------------------
 def scan_symbol(name: str, cfg: dict, macro: MacroFilter,
                 last_bars: dict, now: datetime):
-    """Gestion active + detection de signaux pour un actif du portefeuille."""
+    """Active management + signal detection for one portfolio asset."""
     symbol, mb, mr = cfg["symbol"], cfg["magic_breakout"], cfg["magic_reversion"]
     vf = cfg.get("vix_filter", True)
     manage_positions(symbol, (mb, mr))
 
-    # --- Strategie A : breakout M30 (sur nouvelle bougie cloturee) ---
+    # --- Strategy A: M30 breakout (on a new closed candle) ---
     if (cfg.get("breakout", True)
             and in_trading_hours(now, BREAKOUT_HOUR_START,
                                  BREAKOUT_HOUR_END)):
         df_m30 = get_rates(symbol, mt5.TIMEFRAME_M30, 96)
         if df_m30 is not None and len(df_m30) > 2:
-            closed = df_m30.iloc[:-1]  # derniere ligne = bougie en cours
+            closed = df_m30.iloc[:-1]  # last row = candle in progress
             bar_time = closed["time"].iloc[-1]
             if last_bars.get((name, "m30")) != bar_time:
                 last_bars[(name, "m30")] = bar_time
@@ -437,11 +438,11 @@ def scan_symbol(name: str, cfg: dict, macro: MacroFilter,
                 sig = apply_macro_filter(breakout_signal(closed, hi, lo),
                                          macro.vix(now), vf)
                 if sig and not has_open_position(symbol, mb):
-                    log.info("[%s] Signal BREAKOUT %s (Asie H=%s L=%s)",
+                    log.info("[%s] BREAKOUT signal %s (Asia H=%s L=%s)",
                              name, sig, fp(symbol, hi), fp(symbol, lo))
                     open_trade(symbol, sig, mb, "sentinel_breakout")
 
-    # --- Strategie B : mean reversion M5 (sur nouvelle bougie cloturee) ---
+    # --- Strategy B: M5 mean reversion (on a new closed candle) ---
     if in_trading_hours(now, REVERSION_HOUR_START, REVERSION_HOUR_END):
         df_m5 = get_rates(symbol, mt5.TIMEFRAME_M5, 120)
         if df_m5 is not None and len(df_m5) > 2:
@@ -452,17 +453,17 @@ def scan_symbol(name: str, cfg: dict, macro: MacroFilter,
                 sig = apply_macro_filter(reversion_signal(closed),
                                          macro.vix(now), vf)
                 if sig and not has_open_position(symbol, mr):
-                    log.info("[%s] Signal REVERSION %s", name, sig)
+                    log.info("[%s] REVERSION signal %s", name, sig)
                     open_trade(symbol, sig, mr, "sentinel_reversion")
 
 
 def run_cycle(active: dict, guard: DayGuard, macro: MacroFilter,
               last_bars: dict, now: datetime | None = None):
-    """Un passage de boucle : coupe-circuit global puis scan du portefeuille."""
+    """One loop pass: global circuit breaker then portfolio scan."""
     now = now or datetime.now(timezone.utc)
     acc = mt5.account_info()
     if acc is None:
-        raise ConnectionError(f"account_info() KO : {mt5.last_error()}")
+        raise ConnectionError(f"account_info() KO: {mt5.last_error()}")
 
     guard.roll_day(now, acc.balance)
     if guard.check(acc.equity):
@@ -477,13 +478,13 @@ def main():
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S")
-    log.info("Demarrage SENTINEL multi-actifs %s",
+    log.info("Starting SENTINEL multi-asset %s",
              list(CONFIG_PORTFOLIO))
     if not connect():
         return 1
     active = resolve_symbols()
     if not active:
-        log.error("Aucun actif du portefeuille disponible.")
+        log.error("No portfolio asset available.")
         mt5.shutdown()
         return 1
     guard = DayGuard()
@@ -494,13 +495,13 @@ def main():
             run_cycle(active, guard, macro, last_bars)
             write_heartbeat()
         except ConnectionError as exc:
-            log.error("Connexion perdue : %s - reconnexion...", exc)
+            log.error("Connection lost: %s - reconnecting...", exc)
             mt5.shutdown()
             time.sleep(5)
             if not connect():
                 time.sleep(10)
         except Exception as exc:
-            log.exception("Erreur inattendue : %s", exc)
+            log.exception("Unexpected error: %s", exc)
         time.sleep(1)
 
 

@@ -1,7 +1,7 @@
-"""Tests des fonctions pures de strategie du bot 1 (sentinel_signals).
+"""Tests for the pure strategy functions of bot 1 (sentinel_signals).
 
-Executer :  python -m unittest test_sentinel_signals -v
-Aucun mock MT5/yfinance necessaire : le module est pur (numpy/pandas).
+Run:  python -m unittest test_sentinel_signals -v
+No MT5/yfinance mock needed: the module is pure (numpy/pandas).
 """
 
 import os
@@ -32,7 +32,7 @@ def make_df(closes, highs=None, lows=None, times=None):
     })
 
 
-# --- Indicateurs --------------------------------------------------------------
+# --- Indicators ---------------------------------------------------------------
 class TestIndicators(unittest.TestCase):
     def test_rsi_extremes(self):
         up = pd.Series(np.arange(1, 40, dtype=float))
@@ -59,7 +59,7 @@ class TestIndicators(unittest.TestCase):
         self.assertFalse(ss.is_flat_range(accel_trend))
 
 
-# --- Horaires & plage asiatique -----------------------------------------------
+# --- Trading hours & Asian range -----------------------------------------------
 class TestSessions(unittest.TestCase):
     def test_breakout_window_8_to_16(self):
         def d(h, m=0):
@@ -82,7 +82,7 @@ class TestSessions(unittest.TestCase):
             self.assertFalse(ss.in_trading_hours(d(18), *w))
 
     def test_trading_hours_bypass_flag(self):
-        # bypass temporaire de test en direct : tout horaire accepte
+        # temporary live-testing bypass: any hour accepted
         with mock.patch.object(ss, "FORCE_TRADING_HOURS", True):
             self.assertTrue(ss.in_trading_hours(
                 datetime(2026, 7, 14, 3, tzinfo=UTC),
@@ -104,7 +104,7 @@ class TestSessions(unittest.TestCase):
             df, datetime(2026, 7, 14, 14, 0, tzinfo=UTC)), (None, None))
 
 
-# --- Signaux ------------------------------------------------------------------
+# --- Signals ------------------------------------------------------------------
 class TestSignals(unittest.TestCase):
     def test_breakout_buy_sell_none(self):
         self.assertEqual(ss.breakout_signal(make_df([56]), 55, 35), "BUY")
@@ -117,7 +117,7 @@ class TestSignals(unittest.TestCase):
         return make_df(base + tail)
 
     def test_reversion_buy(self):
-        df = self._reversion_df([1990.0, 2000.0])  # sous la bande, puis retour
+        df = self._reversion_df([1990.0, 2000.0])  # below the band, then back
         fake_rsi = pd.Series([50.0] * 48 + [10.0, 50.0])
         with mock.patch.object(ss, "is_flat_range", return_value=True), \
              mock.patch.object(ss, "rsi", return_value=fake_rsi):
@@ -132,7 +132,7 @@ class TestSignals(unittest.TestCase):
 
     def test_reversion_requires_extreme_rsi(self):
         df = self._reversion_df([1990.0, 2000.0])
-        fake_rsi = pd.Series([50.0] * 50)  # RSI jamais < 20
+        fake_rsi = pd.Series([50.0] * 50)  # RSI never < 20
         with mock.patch.object(ss, "is_flat_range", return_value=True), \
              mock.patch.object(ss, "rsi", return_value=fake_rsi):
             self.assertIsNone(ss.reversion_signal(df))
@@ -144,13 +144,13 @@ class TestSignals(unittest.TestCase):
 
     def test_macro_filter_blocks_sell(self):
         self.assertIsNone(ss.apply_macro_filter("SELL", 30.0))
-        self.assertIsNone(ss.apply_macro_filter("SELL", None))  # VIX inconnu
+        self.assertIsNone(ss.apply_macro_filter("SELL", None))  # unknown VIX
         self.assertEqual(ss.apply_macro_filter("SELL", 20.0), "SELL")
         self.assertEqual(ss.apply_macro_filter("BUY", 30.0), "BUY")
         self.assertIsNone(ss.apply_macro_filter(None, 20.0))
 
     def test_macro_filter_asymmetric_by_asset(self):
-        # VIX 30 : SELL bloque si vix_filter (or), autorise sinon (forex)
+        # VIX 30: SELL blocked if vix_filter (gold), allowed otherwise (forex)
         self.assertIsNone(ss.apply_macro_filter("SELL", 30.0,
                                                 vix_filter=True))
         self.assertEqual(ss.apply_macro_filter("SELL", 30.0,

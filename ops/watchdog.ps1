@@ -1,10 +1,10 @@
-# Watchdog de la flotte Sentinel.
-# - Verifie toutes les 30 s que chaque bot a un processus vivant, relance sinon
-#   (orchestrateur en premier dans la liste).
-# - Capture stdout/stderr de chaque bot dans logs/<bot>.log (rotation a 10 Mo).
-# - Ecrit logs/status.html a chaque cycle (page auto-rafraichie, a ouvrir
-#   dans un navigateur pour surveiller la flotte).
-# - Lance par la tache planifiee "SentinelWatchdog" a l'ouverture de session.
+# Sentinel fleet watchdog.
+# - Checks every 30 s that each bot has a live process, restarts otherwise
+#   (orchestrator first in the list).
+# - Captures each bot's stdout/stderr into logs/<bot>.log (10 MB rotation).
+# - Writes logs/status.html on each cycle (auto-refreshing page, open it
+#   in a browser to monitor the fleet).
+# - Launched by the "SentinelWatchdog" scheduled task at session logon.
 
 $Root = Split-Path -Parent $PSScriptRoot
 $BotsDir = Join-Path $Root "bots"
@@ -20,9 +20,9 @@ $Bots = @(
     "sentinel_telegram.py",
     "sentinel_macro_analyst.py"
 )
-# Age max du heartbeat (logs/<bot>.hb, ecrit apres chaque cycle reussi).
-# Au-dela : processus vivant mais gele -> kill + relance. Le bot 5 a un
-# cycle de 15 min, le bot 6 attend parfois un token : seuils adaptes.
+# Max heartbeat age (logs/<bot>.hb, written after each successful cycle).
+# Beyond that: process alive but frozen -> kill + restart. Bot 5 has a
+# 15-min cycle, bot 6 sometimes waits for a token: adapted thresholds.
 $HbLimitSec = @{
     "sentinel_risk_orchestrator.py" = 300
     "sentinel_bot.py"               = 300
@@ -39,8 +39,8 @@ function Write-Log($msg) {
     "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') $msg" | Add-Content $WatchLog
 }
 
-# Alerte Telegram (token dans bots/telegram_config.json, chat_id capture
-# par sentinel_telegram.py dans telegram_state.json). Silencieux si absent.
+# Telegram alert (token in bots/telegram_config.json, chat_id captured
+# by sentinel_telegram.py in telegram_state.json). Silent if missing.
 function Send-Telegram($text) {
     try {
         $cfg = Get-Content (Join-Path $BotsDir "telegram_config.json") `
@@ -60,8 +60,8 @@ $StatusHtml = Join-Path $LogDir "status.html"
 function Write-StatusPage($rows) {
     $tr = ($rows | ForEach-Object {
         $cls = if ($_.Ok) { "ok" } else { "ko" }
-        $etat = if ($_.Ok) { "OK" } else { "RELANCE" }
-        "<tr class='$cls'><td>$etat</td><td>$($_.Bot)</td><td>$($_.ProcId)</td><td>$($_.Up)</td><td>$($_.Log)</td></tr>"
+        $state = if ($_.Ok) { "OK" } else { "RESTARTED" }
+        "<tr class='$cls'><td>$state</td><td>$($_.Bot)</td><td>$($_.ProcId)</td><td>$($_.Up)</td><td>$($_.Log)</td></tr>"
     }) -join "`n"
     $events = ""
     if (Test-Path $WatchLog) {
@@ -69,10 +69,10 @@ function Write-StatusPage($rows) {
     }
     @"
 <!doctype html>
-<html lang="fr"><head>
+<html lang="en"><head>
 <meta charset="utf-8">
 <meta http-equiv="refresh" content="30">
-<title>Sentinel - etat de la flotte</title>
+<title>Sentinel - fleet status</title>
 <style>
  body { font-family: Segoe UI, sans-serif; margin: 2em; background: #1b1e24; color: #d8dde6; }
  h1 { font-size: 1.3em; } small { color: #8a93a3; }
@@ -83,26 +83,26 @@ function Write-StatusPage($rows) {
  pre { background: #14161b; padding: 1em; margin-top: 1.5em; color: #8a93a3; }
 </style>
 </head><body>
-<h1>Flotte Sentinel <small>mise a jour $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') (auto-refresh 30 s, watchdog pid $PID)</small></h1>
+<h1>Sentinel fleet <small>updated $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') (auto-refresh 30 s, watchdog pid $PID)</small></h1>
 <table>
-<tr><th>Etat</th><th>Bot</th><th>PID</th><th>Uptime</th><th>Dernier log</th></tr>
+<tr><th>State</th><th>Bot</th><th>PID</th><th>Uptime</th><th>Last log</th></tr>
 $tr
 </table>
-<h1>Derniers evenements watchdog</h1>
+<h1>Latest watchdog events</h1>
 <pre>$events</pre>
 </body></html>
 "@ | Out-File $StatusHtml -Encoding utf8
 }
 
-# garde anti-doublon : un seul watchdog a la fois
+# anti-duplicate guard: only one watchdog at a time
 $twin = Get-CimInstance Win32_Process -Filter "Name like 'powershell%'" |
     Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -match "watchdog\.ps1" }
 if ($twin) {
-    Write-Log "watchdog deja actif (pid $($twin[0].ProcessId)), sortie."
+    Write-Log "watchdog already running (pid $($twin[0].ProcessId)), exiting."
     exit 0
 }
 
-Write-Log "watchdog demarre (pid $PID)"
+Write-Log "watchdog started (pid $PID)"
 while ($true) {
     $procs = Get-CimInstance Win32_Process -Filter "Name like 'python%'"
     $rows = @()
@@ -112,15 +112,15 @@ while ($true) {
         } | Select-Object -First 1
         $logFile = Join-Path $LogDir ($bot -replace "\.py$", ".log")
 
-        # heartbeat : vivant mais gele (present ET plus vieux que la limite)
+        # heartbeat: alive but frozen (present AND older than the limit)
         if ($running) {
             $hb = Join-Path $LogDir ($bot -replace "\.py$", ".hb")
             if (Test-Path $hb) {
                 $age = ((Get-Date) - (Get-Item $hb).LastWriteTime).TotalSeconds
                 if ($age -gt $HbLimitSec[$bot]) {
-                    Write-Log ("$bot gele (heartbeat {0:n0}s) -> kill" -f $age)
-                    Send-Telegram ("ALERTE : $bot gele (aucun cycle depuis " +
-                        "{0:n0} min) - redemarrage force" -f ($age / 60))
+                    Write-Log ("$bot frozen (heartbeat {0:n0}s) -> kill" -f $age)
+                    Send-Telegram ("ALERT: $bot frozen (no cycle for " +
+                        "{0:n0} min) - forced restart" -f ($age / 60))
                     Stop-Process -Id $running.ProcessId -Force `
                         -ErrorAction SilentlyContinue
                     Remove-Item $hb -Force -ErrorAction SilentlyContinue
@@ -128,20 +128,20 @@ while ($true) {
                 }
             }
         }
-        $logInfo = "aucun log"
+        $logInfo = "no log"
         if (Test-Path $logFile) {
             $min = [int]((Get-Date) - (Get-Item $logFile).LastWriteTime).TotalMinutes
-            $logInfo = "il y a $min min"
+            $logInfo = "$min min ago"
         }
         if ($running) {
-            $up = "{0:d\j\ h\h\ mm\m}" -f ((Get-Date) - $running.CreationDate)
+            $up = "{0:d\d\ h\h\ mm\m}" -f ((Get-Date) - $running.CreationDate)
             $rows += [pscustomobject]@{
                 Bot = $bot; Ok = $true
                 ProcId = $running.ProcessId; Up = $up; Log = $logInfo
             }
         } else {
-            Write-Log "$bot absent -> relance"
-            Send-Telegram "ALERTE : $bot etait arrete - relance par le watchdog"
+            Write-Log "$bot missing -> restart"
+            Send-Telegram "ALERT: $bot was stopped - restarted by the watchdog"
             Start-Process cmd `
                 -ArgumentList "/c python -u $bot >> `"$logFile`" 2>&1" `
                 -WorkingDirectory $BotsDir -WindowStyle Hidden
@@ -155,7 +155,7 @@ while ($true) {
     Get-ChildItem $LogDir -Filter *.log |
         Where-Object Length -gt 10MB | ForEach-Object {
             Move-Item $_.FullName "$($_.FullName).1" -Force
-            Write-Log "rotation $($_.Name)"
+            Write-Log "rotated $($_.Name)"
         }
     Write-StatusPage $rows
     Start-Sleep -Seconds $CheckSeconds

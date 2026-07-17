@@ -1,6 +1,6 @@
-"""Tests SENTINEL TELEGRAM (MT5 et requests mockes).
+"""SENTINEL TELEGRAM tests (MT5 and requests mocked).
 
-Executer :  python -m unittest test_sentinel_telegram -v
+Run:  python -m unittest test_sentinel_telegram -v
 """
 
 import json
@@ -72,7 +72,7 @@ class TestTradesCsv(unittest.TestCase):
         self.assertEqual(rows[0]["close_time"].hour, 12)
 
     def test_read_trades_missing_file(self):
-        self.assertEqual(tg.read_trades("nulle_part.csv"), [])
+        self.assertEqual(tg.read_trades("nowhere.csv"), [])
 
 
 class TestDealsAndLocks(unittest.TestCase):
@@ -81,9 +81,9 @@ class TestDealsAndLocks(unittest.TestCase):
         deals = [
             SimpleNamespace(entry=1, magic=1001, time=t0, profit=5.0,
                             commission=0.0, swap=0.0, symbol="XAUUSD"),
-            SimpleNamespace(entry=0, magic=1001, time=t0),        # entree
-            SimpleNamespace(entry=1, magic=9999, time=t0),        # etranger
-            SimpleNamespace(entry=1, magic=4001, time=t0 - 999),  # deja vu
+            SimpleNamespace(entry=0, magic=1001, time=t0),        # entry
+            SimpleNamespace(entry=1, magic=9999, time=t0),        # foreign
+            SimpleNamespace(entry=1, magic=4001, time=t0 - 999),  # already seen
         ]
         out = tg.new_closing_deals(deals, since=t0 - 1)
         self.assertEqual(len(out), 1)
@@ -101,13 +101,13 @@ class TestDealsAndLocks(unittest.TestCase):
 
     def test_should_send_daily(self):
         self.assertTrue(tg.should_send_daily("2026-07-14", NOW))   # 19h > 18h
-        self.assertFalse(tg.should_send_daily("2026-07-15", NOW))  # deja fait
+        self.assertFalse(tg.should_send_daily("2026-07-15", NOW))  # already done
         early = NOW.replace(hour=int(tg.DAILY_REPORT_HOUR) - 1)
         self.assertFalse(tg.should_send_daily("2026-07-14", early))
 
 
 class TestEntryWindows(unittest.TestCase):
-    """/status : chaque strategie peut-elle ouvrir un trade maintenant ?"""
+    """/status: can each strategy open a trade right now?"""
 
     @staticmethod
     def _at(hour):
@@ -116,7 +116,7 @@ class TestEntryWindows(unittest.TestCase):
 
     def test_registry_matches_bot_configs(self):
         # breakout 8-16, reversion 13-18 (bot 1), statarb 7-20 (bot 2),
-        # trend : blackout rollover 21-23 (bot 3)
+        # trend: rollover blackout 21-23 (bot 3)
         by_strat = {w["strategy"]: (w["start"], w["end"])
                     for w in tg.ENTRY_WINDOWS}
         self.assertEqual(by_strat["breakout (bot 1)"], (8, 16))
@@ -126,26 +126,26 @@ class TestEntryWindows(unittest.TestCase):
 
     def test_morning_10h(self):
         txt = self._at(10)
-        self.assertIn("breakout (bot 1) : peut trader jusqu'a 16:00", txt)
-        self.assertIn("reversion (bot 1) : ⏳ fenetre fermee, "
-                      "ouvre a 13:00", txt)
-        self.assertIn("statarb (bot 2) : peut trader jusqu'a 20:00", txt)
-        self.assertIn("trend (bot 3) : peut trader", txt)
+        self.assertIn("breakout (bot 1): can trade until 16:00", txt)
+        self.assertIn("reversion (bot 1): ⏳ window closed, "
+                      "opens at 13:00", txt)
+        self.assertIn("statarb (bot 2): can trade until 20:00", txt)
+        self.assertIn("trend (bot 3): can trade", txt)
 
     def test_rollover_22h_only_trend_blackout_applies(self):
         txt = self._at(22)
-        self.assertIn("trend (bot 3) : ⏳ fenetre fermee, ouvre a 23:00", txt)
-        self.assertIn("breakout (bot 1) : ⏳ fenetre fermee, "
-                      "ouvre a 08:00", txt)
+        self.assertIn("trend (bot 3): ⏳ window closed, opens at 23:00", txt)
+        self.assertIn("breakout (bot 1): ⏳ window closed, "
+                      "opens at 08:00", txt)
 
     def test_wrap_around_trend_open_after_23h(self):
-        self.assertIn("trend (bot 3) : peut trader jusqu'a 21:00",
+        self.assertIn("trend (bot 3): can trade until 21:00",
                       self._at(23))
-        self.assertIn("trend (bot 3) : peut trader jusqu'a 21:00",
+        self.assertIn("trend (bot 3): can trade until 21:00",
                       self._at(3))
 
     def test_breakout_note_mentions_suspensions(self):
-        self.assertIn("XAUUSD uniquement, EURUSD/GBPUSD suspendus",
+        self.assertIn("XAUUSD only, EURUSD/GBPUSD suspended",
                       self._at(10))
 
     def test_status_text_includes_windows_section(self):
@@ -155,20 +155,20 @@ class TestEntryWindows(unittest.TestCase):
         with mock.patch.object(tg, "bots_processes", return_value={}), \
              mock.patch.object(tg, "active_locks", return_value=[]):
             txt = tg.status_text(NOW)
-        self.assertIn("Fenetres d'entree (UTC) :", txt)
+        self.assertIn("Entry windows (UTC):", txt)
         self.assertIn("statarb (bot 2)", txt)
 
 
 class TestSuspensions(unittest.TestCase):
-    """Suivi des couples suspendus/reduits dans le rapport quotidien."""
+    """Tracking of suspended/reduced pairs in the daily report."""
 
     def test_registry_matches_research_decisions(self):
-        # decisions du 2026-07-15 (AMELIORATION_CONTINUE.md section 5)
+        # decisions of 2026-07-15 (AMELIORATION_CONTINUE.md section 5)
         couples = {(s["strategy"], s["symbol"], s["action"])
                    for s in tg.SUSPENSIONS}
-        self.assertIn(("breakout", "EURUSD", "suspendu"), couples)
-        self.assertIn(("breakout", "GBPUSD", "suspendu"), couples)
-        self.assertIn(("trend", "XTIUSD", "risque /2"), couples)
+        self.assertIn(("breakout", "EURUSD", "suspended"), couples)
+        self.assertIn(("breakout", "GBPUSD", "suspended"), couples)
+        self.assertIn(("trend", "XTIUSD", "risk /2"), couples)
         self.assertEqual(len(tg.SUSPENSIONS), 5)
 
     def test_counts_trades_since_decision_with_aliases(self):
@@ -176,24 +176,24 @@ class TestSuspensions(unittest.TestCase):
             _row(10.0, days_ago=0, strategy="trend", symbol="EURUSD.p"),
             _row(-5.0, days_ago=0, strategy="trend", symbol="SpotCrude"),
             _row(10.0, days_ago=40, strategy="trend",
-                 symbol="EURUSD.p"),                    # avant la decision
+                 symbol="EURUSD.p"),                    # before the decision
             _row(10.0, days_ago=0, strategy="breakout",
-                 symbol="EURUSD.p"),                    # autre strategie
+                 symbol="EURUSD.p"),                    # other strategy
         ]
         lines = "\n".join(tg.suspension_lines(rows, NOW))
-        self.assertIn("trend EURUSD : risque /2 depuis le 2026-07-15, "
-                      "1 trades depuis", lines)
-        self.assertIn("trend XTIUSD : risque /2 depuis le 2026-07-15, "
-                      "1 trades depuis", lines)
-        self.assertIn("breakout GBPUSD : suspendu depuis le 2026-07-15, "
-                      "0 trades depuis", lines)
+        self.assertIn("trend EURUSD: risk /2 since 2026-07-15, "
+                      "1 trades since", lines)
+        self.assertIn("trend XTIUSD: risk /2 since 2026-07-15, "
+                      "1 trades since", lines)
+        self.assertIn("breakout GBPUSD: suspended since 2026-07-15, "
+                      "0 trades since", lines)
 
     def test_review_date_and_overdue_flag(self):
         lines = "\n".join(tg.suspension_lines([], NOW))
-        self.assertIn("reevaluation le 2026-10-14", lines)   # +91 jours
-        self.assertNotIn("ECHUE", lines)
+        self.assertIn("review on 2026-10-14", lines)   # +91 days
+        self.assertNotIn("OVERDUE", lines)
         later = NOW + timedelta(days=120)
-        self.assertIn("ECHUE", "\n".join(tg.suspension_lines([], later)))
+        self.assertIn("OVERDUE", "\n".join(tg.suspension_lines([], later)))
 
     def test_daily_report_includes_surveillance_section(self):
         fd, state = tempfile.mkstemp(suffix=".json")
@@ -206,10 +206,10 @@ class TestSuspensions(unittest.TestCase):
         fake_mt5.account_info.return_value = SimpleNamespace(
             equity=10000.0, currency="EUR", balance=10000.0)
         with mock.patch.object(tg, "read_trades", return_value=[]):
-            tg.maybe_daily_report(n, NOW)                # 19h : rapport du
+            tg.maybe_daily_report(n, NOW)                # 19h: report due
         sent = [c for c in n.api.call_args_list
                 if c[0][0] == "sendMessage"][0]
-        self.assertIn("Couples sous surveillance", sent[1]["text"])
+        self.assertIn("Pairs under watch", sent[1]["text"])
         self.assertIn("breakout EURUSD", sent[1]["text"])
         os.path.exists(state) and os.unlink(state)
 
@@ -265,7 +265,7 @@ class TestNotifier(unittest.TestCase):
             self.assertEqual(fh.read(), now.isoformat())
 
     def test_send_without_chat_id_is_noop(self):
-        self.n.send("bonjour")
+        self.n.send("hello")
         self.n.api.assert_not_called()
 
     def test_closed_deal_notification(self):
@@ -291,7 +291,7 @@ class TestNotifier(unittest.TestCase):
             SimpleNamespace(ticket=12, symbol="EURUSD", magic=2002, type=1,
                             volume=1.0, profit=0.0),
             SimpleNamespace(ticket=13, symbol="EURUSD", magic=777, type=1,
-                            volume=1.0, profit=0.0)]      # etranger : ignore
+                            volume=1.0, profit=0.0)]      # foreign: ignored
         tg.check_position_events(self.n)
         sends = [c for c in self.n.api.call_args_list
                  if c[0][0] == "sendMessage"]

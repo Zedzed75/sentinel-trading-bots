@@ -1,14 +1,14 @@
-"""SENTINEL DASHBOARD v2 - Pilotage mobile de la flotte + meteo du marche.
+"""SENTINEL DASHBOARD v2 - Mobile fleet control + market weather.
 
-FastAPI + Jinja2 + DaisyUI/HTMX (CDN) : fragment "live" rafraichi toutes
-les 10 s. Fusionne a la volee macro_weather.json (bot 7), trades.csv
-(bot 5), heartbeats/verrous, MT5 et psutil ; un fichier absent/corrompu
-=> squelette gris, jamais de 500. Actions (Basic Auth + hx-confirm) :
-PANIC (positions Sentinel fermees + verrou GLOBAL, deverrouillage humain)
-et FORCE RUN bot 7. Basic Auth obligatoire ; HTTPS/VPN hors reseau local.
+FastAPI + Jinja2 + DaisyUI/HTMX (CDN): "live" fragment refreshed every
+10 s. Merges on the fly macro_weather.json (bot 7), trades.csv (bot 5),
+heartbeats/locks, MT5 and psutil; a missing/corrupt file => grey
+skeleton, never a 500. Actions (Basic Auth + hx-confirm): PANIC
+(Sentinel positions closed + GLOBAL lock, human unlock) and FORCE RUN
+bot 7. Basic Auth mandatory; HTTPS/VPN outside the local network.
 
-Usage : python sentinel_dashboard.py [port] [--mock]
-(--mock : donnees fictives via mock_dashboard_data.py, sans MT5/VPS)."""
+Usage: python sentinel_dashboard.py [port] [--mock]
+(--mock: fake data via mock_dashboard_data.py, without MT5/VPS)."""
 
 import csv
 import json
@@ -36,24 +36,24 @@ CONFIG_FILE = os.path.join(_DIR, "dashboard_config.json")
 TEMPLATES_DIR = os.path.join(_DIR, "templates")
 
 MOCK = "--mock" in sys.argv or os.environ.get("SENTINEL_DASHBOARD_MOCK") == "1"
-MARGIN_ALERT_LEVEL = 150.0    # alerte rouge sous ce niveau de marge (%)
-DAILY_DD_LIMIT, DEVIATION = 0.04, 20  # seuil jauge bot 1 ; slippage points
+MARGIN_ALERT_LEVEL = 150.0    # red alert below this margin level (%)
+DAILY_DD_LIMIT, DEVIATION = 0.04, 20  # bot 1 gauge threshold; slippage points
 
-# Magic -> strategie (copie volontaire, pas d'imports croises entre modules)
+# Magic -> strategy (deliberate copy, no cross-imports between modules)
 MAGIC_STRATEGY = {1001: "breakout", 2001: "breakout", 3001: "breakout",
                   1002: "reversion", 2002: "reversion", 3002: "reversion",
                   4001: "statarb", **{m: "trend" for m in range(5001, 5006)}}
 
-# La flotte (id, script, nom, hb max aligne watchdog, strategies, state)
-_F = ("id", "script", "nom", "hb_max", "strategies", "state")
+# The fleet (id, script, name, max hb aligned with the watchdog, strategies, state)
+_F = ("id", "script", "name", "hb_max", "strategies", "state")
 FLEET = tuple(dict(zip(_F, b)) for b in (
-    (1, "sentinel_bot.py", "Intraday multi-actifs", 300,
+    (1, "sentinel_bot.py", "Intraday multi-asset", 300,
      ("breakout", "reversion"), "sentinel_state.json"),
     (2, "sentinel_alpha_compound.py", "Stat-arb Brent/WTI", 300,
      ("statarb",), "alpha_state.json"),
     (3, "sentinel_trend.py", "Trend-following H4", 300,
      ("trend",), "trend_state.json"),
-    (4, "sentinel_risk_orchestrator.py", "Orchestrateur", 300,
+    (4, "sentinel_risk_orchestrator.py", "Orchestrator", 300,
      (), "orchestrator_state.json"),
     (5, "sentinel_trade_analytics.py", "Analytics", 2700, (), None),
     (6, "sentinel_telegram.py", "Telegram", 300, (), None),
@@ -63,7 +63,7 @@ FLEET = tuple(dict(zip(_F, b)) for b in (
 log = logging.getLogger("dashboard")
 
 
-# --- Lectures robustes : un fichier absent/corrompu ne casse jamais l'interface. ---
+# --- Robust reads: a missing/corrupt file never breaks the interface. ---
 def load_json(path: str) -> dict:
     try:
         with open(path, encoding="utf-8") as fh:
@@ -81,7 +81,7 @@ def save_json_atomic(path: str, payload: dict):
 
 
 def read_trades(path: str = TRADES_CSV) -> list[dict]:
-    """Journal du bot 5 ; lignes illisibles ignorees, [] si fichier KO."""
+    """Bot 5's journal; unreadable lines ignored, [] if the file is KO."""
     rows = []
     try:
         with open(path, encoding="utf-8", newline="") as fh:
@@ -118,12 +118,12 @@ def heartbeat_age(script: str, now: datetime) -> float | None:
 
 
 def bot_status(hb_age: float | None, hb_max: int, locked: bool) -> str:
-    """suspendu (verrou) > actif (hb frais) > fige (hb vieux) > arrete."""
+    """suspended (lock) > active (fresh hb) > frozen (old hb) > stopped."""
     if locked:
-        return "suspendu"
+        return "suspended"
     if hb_age is None:
-        return "arrete"
-    return "actif" if hb_age <= hb_max else "fige"
+        return "stopped"
+    return "active" if hb_age <= hb_max else "frozen"
 
 
 def daily_gauge(equity: float | None, day_balance: float | None) -> dict:
@@ -135,11 +135,23 @@ def daily_gauge(equity: float | None, day_balance: float | None) -> dict:
             "limit_pct": -DAILY_DD_LIMIT * 100}
 
 
+# Legacy French values/keys of macro_weather.json written before the
+# English migration (bot 7 rewrites the file in English on its next run).
+_LEGACY_WEATHER = {"ORAGEUX": "STORMY", "CALME": "CALM", "NEUTRE": "NEUTRAL"}
+_LEGACY_KEYS = {"geo_resume": "geo_summary", "macro_resume": "macro_summary",
+                "sentiment_resume": "sentiment_summary",
+                "banks_resume": "banks_summary"}
+
+
 def read_weather(now: datetime | None = None) -> dict | None:
-    """Meteo du bot 7 ; None => squelette gris dans l'interface."""
+    """Bot 7's weather; None => grey skeleton in the interface."""
     w = load_json(os.path.join(BOTS_DIR, "macro_weather.json"))
     if not w.get("weather"):
         return None
+    w["weather"] = _LEGACY_WEATHER.get(w["weather"], w["weather"])
+    for old, new in _LEGACY_KEYS.items():
+        if old in w and new not in w:
+            w[new] = w.pop(old)
     now = now or datetime.now(timezone.utc)
     w["stale"] = w.get("date") != now.date().isoformat()
     return w
@@ -174,28 +186,28 @@ def account_snapshot() -> dict:
 
 def open_positions() -> list[dict]:
     return [{"ticket": p.ticket, "symbol": p.symbol, "volume": p.volume,
-             "sens": "LONG" if p.type == mt5.POSITION_TYPE_BUY else "SHORT",
+             "side": "LONG" if p.type == mt5.POSITION_TYPE_BUY else "SHORT",
              "pnl": round(p.profit, 2),
-             "strategie": MAGIC_STRATEGY[p.magic]}
+             "strategy": MAGIC_STRATEGY[p.magic]}
             for p in mt5.positions_get() or [] if p.magic in MAGIC_STRATEGY]
 
 
 def build_state(now: datetime | None = None) -> dict:
-    """Instantane complet servi a l'interface (ne leve jamais)."""
+    """Full snapshot served to the interface (never raises)."""
     if MOCK:
         import mock_dashboard_data
         return mock_dashboard_data.get_state()
     now = now or datetime.now(timezone.utc)
     per = day_stats(read_trades(), now)
-    bots = [{"id": b["id"], "nom": b["nom"], "trade": bool(b["strategies"]),
-             "statut": bot_status(
+    bots = [{"id": b["id"], "name": b["name"], "trade": bool(b["strategies"]),
+             "status": bot_status(
                  heartbeat_age(b["script"], now), b["hb_max"],
                  bool(b["state"] and load_json(os.path.join(
                      BOTS_DIR, b["state"])).get("locked"))),
-             "pnl_jour": round(sum(per.get(s, {}).get("pnl", 0.0)
-                                   for s in b["strategies"]), 2),
-             "trades_jour": sum(per.get(s, {}).get("n", 0)
-                                for s in b["strategies"])}
+             "day_pnl": round(sum(per.get(s, {}).get("pnl", 0.0)
+                                  for s in b["strategies"]), 2),
+             "day_trades": sum(per.get(s, {}).get("n", 0)
+                               for s in b["strategies"])}
             for b in FLEET]
     acc = account_snapshot()
     day_ref = load_json(os.path.join(BOTS_DIR,
@@ -205,25 +217,25 @@ def build_state(now: datetime | None = None) -> dict:
     except Exception:
         cpu = ram = None
     return {
-        "heure": now.strftime("%Y-%m-%d %H:%M:%S UTC"),
-        "compte": acc,
-        "marge_alerte": bool(acc["margin_level"] is not None
+        "time": now.strftime("%Y-%m-%d %H:%M:%S UTC"),
+        "account": acc,
+        "margin_alert": bool(acc["margin_level"] is not None
                              and acc["margin_level"] < MARGIN_ALERT_LEVEL),
-        "meteo": read_weather(now),
+        "weather": read_weather(now),
         "bots": bots,
-        "jauge_jour": daily_gauge(acc["equity"], day_ref),
-        "verrou_global": bool(load_json(os.path.join(
+        "daily_gauge": daily_gauge(acc["equity"], day_ref),
+        "global_lock": bool(load_json(os.path.join(
             BOTS_DIR, "orchestrator_state.json")).get("locked")),
         "risk_scale": load_json(os.path.join(
             BOTS_DIR, "risk_scale.json")).get("scale"),
         "positions": open_positions(),
-        "systeme": {"cpu": cpu, "ram": ram, "watchdog": watchdog_alive()},
+        "system": {"cpu": cpu, "ram": ram, "watchdog": watchdog_alive()},
     }
 
 
-# --- Actions d'urgence (Basic Auth + hx-confirm cote interface) ---
+# --- Emergency actions (Basic Auth + hx-confirm on the interface side) ---
 def close_all_positions() -> int:
-    """Ferme toutes les positions des magics Sentinel par ordre inverse."""
+    """Close all positions of the Sentinel magics via opposite orders."""
     closed = 0
     for p in mt5.positions_get() or []:
         if p.magic not in MAGIC_STRATEGY:
@@ -246,8 +258,8 @@ def close_all_positions() -> int:
 
 
 def engage_global_lock():
-    """Verrou GLOBAL de l'orchestrateur + redemarrage (watchdog <30 s) :
-    il recharge locked=true et purge en continu. Deverrouillage humain."""
+    """Orchestrator GLOBAL lock + restart (watchdog <30 s): it reloads
+    locked=true and keeps purging. Human unlock."""
     path = os.path.join(BOTS_DIR, "orchestrator_state.json")
     save_json_atomic(path, load_json(path) | {"locked": True})
     try:
@@ -257,11 +269,11 @@ def engage_global_lock():
                     for a in (p.info["cmdline"] or [])):
                 p.kill()
     except Exception as exc:
-        log.warning("Orchestrateur non redemarre (%s) : le verrou fichier "
-                    "prendra effet a son prochain (re)demarrage.", exc)
+        log.warning("Orchestrator not restarted (%s): the file lock will "
+                    "take effect on its next (re)start.", exc)
 
 
-# --- Application FastAPI (Basic Auth sur tout) ---
+# --- FastAPI application (Basic Auth on everything) ---
 app = FastAPI(title="Sentinel Dashboard", docs_url=None, redoc_url=None)
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
 _basic = HTTPBasic()
@@ -275,11 +287,11 @@ def _credentials() -> tuple[str, str]:
 
 def require_auth(creds: HTTPBasicCredentials = Depends(_basic)) -> str:
     user, password = _credentials()
-    if not password and not MOCK:      # jamais d'acces sans mot de passe
-        raise HTTPException(503, "Mot de passe non configure.")
+    if not password and not MOCK:      # never any access without a password
+        raise HTTPException(503, "Password not configured.")
     if not MOCK and not (secrets.compare_digest(creds.username, user)
                          and secrets.compare_digest(creds.password, password)):
-        raise HTTPException(401, "Identifiants invalides.",
+        raise HTTPException(401, "Invalid credentials.",
                             headers={"WWW-Authenticate": "Basic"})
     return creds.username
 
@@ -301,7 +313,7 @@ def api_state(_: str = Depends(require_auth)) -> dict:
     return build_state()
 
 
-_MOCK_MSG = "<span class='text-warning'>mode mock : aucune action</span>"
+_MOCK_MSG = "<span class='text-warning'>mock mode: no action</span>"
 
 
 @app.post("/api/panic", response_class=HTMLResponse)
@@ -310,10 +322,10 @@ def api_panic(_: str = Depends(require_auth)) -> str:
         return _MOCK_MSG
     n = close_all_positions()
     engage_global_lock()
-    log.critical("PANIC dashboard : %d position(s) fermee(s), verrou pose.", n)
-    return (f"<span class='text-error font-bold'>\U0001f6a8 PANIC : {n} "
-            f"position(s) fermee(s), verrou GLOBAL pose — deverrouillage "
-            f"manuel requis (orchestrator_state.json)</span>")
+    log.critical("Dashboard PANIC: %d position(s) closed, lock engaged.", n)
+    return (f"<span class='text-error font-bold'>\U0001f6a8 PANIC: {n} "
+            f"position(s) closed, GLOBAL lock engaged — manual unlock "
+            f"required (orchestrator_state.json)</span>")
 
 
 @app.post("/api/forcerun", response_class=HTMLResponse)
@@ -323,8 +335,8 @@ def api_forcerun(_: str = Depends(require_auth)) -> str:
     subprocess.Popen(
         [sys.executable, "-u", "sentinel_macro_analyst.py", "--once"],
         cwd=BOTS_DIR, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-    return ("<span class='text-info'>\U0001f504 Bot 7 lance : rapport "
-            "meteo sur Telegram dans ~1 minute.</span>")
+    return ("<span class='text-info'>\U0001f504 Bot 7 launched: weather "
+            "report on Telegram in ~1 minute.</span>")
 
 
 def main() -> int:
@@ -332,14 +344,14 @@ def main() -> int:
     logging.basicConfig(level=logging.INFO, datefmt="%H:%M:%S",
                         format="%(asctime)s [%(levelname)s] %(message)s")
     if MOCK:
-        log.info("MODE MOCK : donnees fictives, actions desactivees.")
+        log.info("MOCK MODE: fake data, actions disabled.")
     elif not _credentials()[1]:
-        log.error("Aucun mot de passe : copier dashboard_config.example.json "
-                  "vers dashboard_config.json et definir 'password'.")
+        log.error("No password: copy dashboard_config.example.json to "
+                  "dashboard_config.json and set 'password'.")
         return 1
     elif not mt5.initialize(
             path="C:/Program Files/Pepperstone MetaTrader 5/terminal64.exe"):
-        log.warning("MT5 indisponible au demarrage (%s).", mt5.last_error())
+        log.warning("MT5 unavailable at startup (%s).", mt5.last_error())
     port = next((int(a) for a in sys.argv[1:] if a.isdigit()), 8787)
     uvicorn.run(app, host="0.0.0.0", port=port, log_level="warning")
     return 0

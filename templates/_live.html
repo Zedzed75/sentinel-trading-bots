@@ -1,10 +1,10 @@
-{# Fragment auto-rafraichi (10 s) : meteo, alertes, compte, flotte, positions #}
-{% set W = state.meteo %}
+{# Auto-refreshed fragment (10 s): weather, alerts, account, fleet, positions #}
+{% set W = state.weather %}
 
-<!-- A. Header "Meteo Dynamique" (bot 7) -->
-{% if W and W.weather == "ORAGEUX" %}
+<!-- A. "Dynamic Weather" header (bot 7) -->
+{% if W and W.weather == "STORMY" %}
 <div class="card bg-gradient-to-br from-red-950 to-rose-900 shadow-lg shadow-error/50 border border-error/40">
-{% elif W and W.weather == "CALME" %}
+{% elif W and W.weather == "CALM" %}
 <div class="card bg-gradient-to-br from-emerald-950 to-green-900 shadow-lg shadow-success/50 border border-success/40">
 {% else %}
 <div class="card bg-neutral shadow">
@@ -12,13 +12,13 @@
   <div class="card-body py-4">
     {% if W %}
     <div class="flex items-center gap-4">
-      <span class="text-5xl">{{ {"ORAGEUX": "🌪️", "CALME": "☀️", "NEUTRE": "⛅"}[W.weather] }}</span>
+      <span class="text-5xl">{{ {"STORMY": "🌪️", "CALM": "☀️", "NEUTRAL": "⛅"}[W.weather] }}</span>
       <div>
         <div class="text-2xl font-black tracking-widest">{{ W.weather }}</div>
-        <div class="text-sm opacity-80">Confiance : <b>{{ (W.confidence * 100) | round | int }}%</b>{% if W.stale %} · <span class="text-warning">météo d'un jour précédent</span>{% endif %}</div>
+        <div class="text-sm opacity-80">Confidence: <b>{{ (W.confidence * 100) | round | int }}%</b>{% if W.stale %} · <span class="text-warning">weather from a previous day</span>{% endif %}</div>
       </div>
     </div>
-    <p class="text-sm mt-1 opacity-90">🎯 <b>Focus :</b> {{ W.focus }}</p>
+    <p class="text-sm mt-1 opacity-90">🎯 <b>Focus:</b> {{ W.focus }}</p>
     {% else %}
     <div class="flex items-center gap-4">
       <div class="skeleton w-14 h-14 rounded-full"></div>
@@ -28,75 +28,75 @@
   </div>
 </div>
 
-{% if state.verrou_global %}
-<div class="alert alert-error shadow-lg shadow-error/40">🚨 VERROU GLOBAL ACTIF : flotte fermée — analyse humaine requise.</div>
+{% if state.global_lock %}
+<div class="alert alert-error shadow-lg shadow-error/40">🚨 GLOBAL LOCK ACTIVE: fleet closed — human review required.</div>
 {% endif %}
-{% if state.marge_alerte %}
-<div class="alert alert-error">⚠️ Niveau de marge critique (&lt; 150%) — risque d'appel de marge.</div>
+{% if state.margin_alert %}
+<div class="alert alert-error">⚠️ Critical margin level (&lt; 150%) — margin call risk.</div>
 {% endif %}
 
-<!-- Compte + jauge coupe-circuit -->
+<!-- Account + circuit-breaker gauge -->
 <div class="stats stats-vertical sm:stats-horizontal shadow w-full bg-base-100 mt-4">
   <div class="stat py-3"><div class="stat-title">Balance</div>
-    <div class="stat-value text-xl">{{ "%.2f"|format(state.compte.balance) if state.compte.balance is not none else "—" }}</div></div>
-  <div class="stat py-3"><div class="stat-title">Équité</div>
-    <div class="stat-value text-xl">{{ "%.2f"|format(state.compte.equity) if state.compte.equity is not none else "—" }}</div></div>
-  <div class="stat py-3"><div class="stat-title">Marge libre</div>
-    <div class="stat-value text-xl">{{ "%.2f"|format(state.compte.margin_free) if state.compte.margin_free is not none else "—" }}</div>
-    <div class="stat-desc">niveau : {{ state.compte.margin_level if state.compte.margin_level is not none else "—" }}%</div></div>
+    <div class="stat-value text-xl">{{ "%.2f"|format(state.account.balance) if state.account.balance is not none else "—" }}</div></div>
+  <div class="stat py-3"><div class="stat-title">Equity</div>
+    <div class="stat-value text-xl">{{ "%.2f"|format(state.account.equity) if state.account.equity is not none else "—" }}</div></div>
+  <div class="stat py-3"><div class="stat-title">Free margin</div>
+    <div class="stat-value text-xl">{{ "%.2f"|format(state.account.margin_free) if state.account.margin_free is not none else "—" }}</div>
+    <div class="stat-desc">level: {{ state.account.margin_level if state.account.margin_level is not none else "—" }}%</div></div>
 </div>
 
-{% set j = state.jauge_jour %}
+{% set j = state.daily_gauge %}
 <div class="card bg-base-100 shadow mt-4"><div class="card-body py-3">
   <div class="flex items-center gap-3">
-    <span class="text-xs opacity-60 whitespace-nowrap">Perte jour (seuil {{ j.limit_pct }}%)</span>
+    <span class="text-xs opacity-60 whitespace-nowrap">Day loss (limit {{ j.limit_pct }}%)</span>
     <progress class="progress flex-1 {{ 'progress-error' if j.used > 0.75 else 'progress-warning' if j.used > 0.4 else 'progress-success' }}" value="{{ j.used }}" max="1"></progress>
     <span class="font-mono text-sm">{{ j.pct if j.pct is not none else "—" }}%</span>
   </div>
-  <div class="text-xs opacity-50">risk scale : {{ state.risk_scale if state.risk_scale is not none else "—" }}</div>
+  <div class="text-xs opacity-50">risk scale: {{ state.risk_scale if state.risk_scale is not none else "—" }}</div>
 </div></div>
 
-<!-- B. Panel de la flotte -->
+<!-- B. Fleet panel -->
 <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-4">
   {% for b in state.bots %}
   <div class="card bg-base-100 shadow-sm"><div class="card-body py-2 px-4 flex-row items-center justify-between">
     <div>
-      <span class="font-semibold text-sm">Bot {{ b.id }} · {{ b.nom }}</span>
+      <span class="font-semibold text-sm">Bot {{ b.id }} · {{ b.name }}</span>
       <div class="text-xs">
-        {% if b.trade %}<span class="font-mono {{ 'text-success' if b.pnl_jour > 0 else 'text-error' if b.pnl_jour < 0 else 'opacity-60' }}">{{ "%+.2f"|format(b.pnl_jour) }}</span> <span class="opacity-50">· {{ b.trades_jour }} trade(s)</span>
-        {% else %}<span class="opacity-40">ne trade pas</span>{% endif %}
+        {% if b.trade %}<span class="font-mono {{ 'text-success' if b.day_pnl > 0 else 'text-error' if b.day_pnl < 0 else 'opacity-60' }}">{{ "%+.2f"|format(b.day_pnl) }}</span> <span class="opacity-50">· {{ b.day_trades }} trade(s)</span>
+        {% else %}<span class="opacity-40">does not trade</span>{% endif %}
       </div>
     </div>
-    {% if b.statut == "actif" %}<span class="badge badge-success badge-sm shadow shadow-success/50">RUNNING</span>
-    {% elif b.statut == "fige" %}<span class="badge badge-warning badge-sm">FROZEN</span>
-    {% elif b.statut == "suspendu" %}<span class="badge badge-error badge-sm">LOCKED</span>
+    {% if b.status == "active" %}<span class="badge badge-success badge-sm shadow shadow-success/50">RUNNING</span>
+    {% elif b.status == "frozen" %}<span class="badge badge-warning badge-sm">FROZEN</span>
+    {% elif b.status == "suspended" %}<span class="badge badge-error badge-sm">LOCKED</span>
     {% else %}<span class="badge badge-error badge-sm shadow shadow-error/50">STOPPED</span>{% endif %}
   </div></div>
   {% endfor %}
 </div>
 
-<!-- Trades actifs -->
+<!-- Active trades -->
 <div class="card bg-base-100 shadow mt-4"><div class="card-body py-3">
-  <h2 class="card-title text-sm">Trades actifs <span class="badge badge-neutral badge-sm">{{ state.positions | length }}</span></h2>
+  <h2 class="card-title text-sm">Active trades <span class="badge badge-neutral badge-sm">{{ state.positions | length }}</span></h2>
   <div class="overflow-x-auto"><table class="table table-xs">
-    <thead><tr><th>Symbole</th><th>Sens</th><th>Vol.</th><th>PnL</th><th>Strat.</th></tr></thead>
+    <thead><tr><th>Symbol</th><th>Side</th><th>Vol.</th><th>PnL</th><th>Strat.</th></tr></thead>
     <tbody>
       {% for p in state.positions %}
       <tr><td>{{ p.symbol }}</td>
-        <td><span class="badge badge-xs {{ 'badge-info' if p.sens == 'LONG' else 'badge-warning' }}">{{ p.sens }}</span></td>
+        <td><span class="badge badge-xs {{ 'badge-info' if p.side == 'LONG' else 'badge-warning' }}">{{ p.side }}</span></td>
         <td class="font-mono">{{ p.volume }}</td>
         <td class="font-mono {{ 'text-success' if p.pnl > 0 else 'text-error' if p.pnl < 0 else '' }}">{{ "%+.2f"|format(p.pnl) }}</td>
-        <td class="opacity-60">{{ p.strategie }}</td></tr>
+        <td class="opacity-60">{{ p.strategy }}</td></tr>
       {% else %}
-      <tr><td colspan="5" class="opacity-40">aucune position</td></tr>
+      <tr><td colspan="5" class="opacity-40">no position</td></tr>
       {% endfor %}
     </tbody>
   </table></div>
 </div></div>
 
 <div class="text-xs opacity-50 flex gap-4 justify-center mt-3">
-  <span>{{ state.heure }}</span>
-  <span>CPU {{ state.systeme.cpu if state.systeme.cpu is not none else "—" }}%</span>
-  <span>RAM {{ state.systeme.ram if state.systeme.ram is not none else "—" }}%</span>
-  <span>watchdog {{ "OK ✅" if state.systeme.watchdog else "ABSENT ⚠️" }}</span>
+  <span>{{ state.time }}</span>
+  <span>CPU {{ state.system.cpu if state.system.cpu is not none else "—" }}%</span>
+  <span>RAM {{ state.system.ram if state.system.ram is not none else "—" }}%</span>
+  <span>watchdog {{ "OK ✅" if state.system.watchdog else "MISSING ⚠️" }}</span>
 </div>

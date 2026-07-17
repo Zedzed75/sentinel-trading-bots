@@ -1,6 +1,6 @@
-"""Tests SENTINEL TREND (MT5 mocke).
+"""SENTINEL TREND tests (MT5 mocked).
 
-Executer :  python -m unittest test_sentinel_trend -v
+Run:  python -m unittest test_sentinel_trend -v
 """
 
 import json
@@ -50,8 +50,8 @@ def make_df(closes, highs=None, lows=None):
 
 class TestSignals(unittest.TestCase):
     def test_donchian_excludes_signal_bar(self):
-        # canal calcule sur les n bougies AVANT la derniere
-        df = make_df([100] * 10 + [200])       # la cassure ne se compte pas
+        # channel computed on the n candles BEFORE the last one
+        df = make_df([100] * 10 + [200])       # the breakout doesn't count
         hh, ll = st.donchian(df, 10)
         self.assertEqual((hh, ll), (101.0, 99.0))
 
@@ -60,7 +60,7 @@ class TestSignals(unittest.TestCase):
         self.assertEqual(st.entry_signal(make_df(flat + [102.0])), "BUY")
         self.assertEqual(st.entry_signal(make_df(flat + [98.0])), "SELL")
         self.assertIsNone(st.entry_signal(make_df(flat + [100.5])))
-        self.assertIsNone(st.entry_signal(make_df([100.0, 102.0])))  # court
+        self.assertIsNone(st.entry_signal(make_df([100.0, 102.0])))  # short
 
     def test_exit_on_opposite_channel(self):
         flat = [100.0] * st.EXIT_CHANNEL
@@ -74,7 +74,7 @@ class TestSignals(unittest.TestCase):
 class TestRiskScale(unittest.TestCase):
     def test_lot_scaled_by_orchestrator_factor(self):
         args = (10000, 2.0, 0.01, 0.01, 0.01, 1000.0, 0.01)
-        self.assertEqual(st.compute_lot(*args, scale=1.0), 50.0)  # 1% / 2$
+        self.assertEqual(st.compute_lot(*args, scale=1.0), 50.0)  # 1% / $2
         self.assertEqual(st.compute_lot(*args, scale=0.5), 25.0)
         self.assertEqual(st.compute_lot(*args, scale=0.0), 0.0)
 
@@ -86,11 +86,11 @@ class TestRiskScale(unittest.TestCase):
                 json.dump({"scale": 0.42}, fh)
             self.assertEqual(st.read_risk_scale(path), 0.42)
             with open(path, "w", encoding="utf-8") as fh:
-                json.dump({"scale": 7.0}, fh)      # borne a [0,1]
+                json.dump({"scale": 7.0}, fh)      # clamped to [0,1]
             self.assertEqual(st.read_risk_scale(path), 1.0)
         finally:
             os.unlink(path)
-        self.assertEqual(st.read_risk_scale(path), 1.0)  # absent -> 1.0
+        self.assertEqual(st.read_risk_scale(path), 1.0)  # missing -> 1.0
 
 
 class TestPeakGuard(unittest.TestCase):
@@ -135,10 +135,10 @@ class TestExecution(unittest.TestCase):
         return [{"time": 1750000000 + i * 14400, "open": c, "high": c + 1,
                  "low": c - 1, "close": c} for i, c in enumerate(closes)]
 
-    NOON = datetime(2026, 7, 14, 14, tzinfo=UTC)   # hors blackout rollover
+    NOON = datetime(2026, 7, 14, 14, tzinfo=UTC)   # outside rollover blackout
 
     def test_breakout_opens_trade_with_sl_no_tp(self):
-        # 56 bougies plates puis cassure haussiere + bougie en cours
+        # 56 flat candles then bullish breakout + candle in progress
         closes = [100.0] * (st.ENTRY_CHANNEL + 1) + [103.0, 103.0]
         fake_mt5.copy_rates_from_pos.return_value = self._rates(closes)
         st.run_cycle(self.active, self.guard, 16388, {}, now=self.NOON)
@@ -146,8 +146,8 @@ class TestExecution(unittest.TestCase):
         self.assertEqual(req["type"], fake_mt5.ORDER_TYPE_BUY)
         self.assertEqual(req["magic"], 5001)
         self.assertIn("sl", req)
-        self.assertNotIn("tp", req)          # sortie par canal, pas de TP
-        self.assertLess(req["sl"], 102.0)    # SL sous le prix d'entree
+        self.assertNotIn("tp", req)          # channel exit, no TP
+        self.assertLess(req["sl"], 102.0)    # SL below the entry price
 
     def test_no_reentry_same_bar_and_no_entry_if_position(self):
         closes = [100.0] * (st.ENTRY_CHANNEL + 1) + [103.0, 103.0]
@@ -155,9 +155,9 @@ class TestExecution(unittest.TestCase):
         last_bars = {}
         st.run_cycle(self.active, self.guard, 16388, last_bars, now=self.NOON)
         st.run_cycle(self.active, self.guard, 16388, last_bars,
-                     now=self.NOON)   # meme bougie
+                     now=self.NOON)   # same candle
         self.assertEqual(fake_mt5.order_send.call_count, 1)
-        # position ouverte + nouvelle bougie -> pas de nouvelle entree
+        # open position + new candle -> no new entry
         pos = SimpleNamespace(ticket=1, symbol="XAUUSD.p", magic=5001,
                               type=0, volume=1.0, profit=5.0)
         fake_mt5.positions_get.return_value = [pos]
@@ -167,7 +167,7 @@ class TestExecution(unittest.TestCase):
         self.assertEqual(fake_mt5.order_send.call_count, 1)
 
     def test_production_config_halves_risk_on_losing_symbols(self):
-        # decision du 2026-07-15 (docs/AMELIORATION_CONTINUE.md section 5)
+        # decision of 2026-07-15 (docs/AMELIORATION_CONTINUE.md section 5)
         for name, expected in (("XAUUSD", 1.0), ("US500", 1.0),
                                ("EURUSD", 0.5), ("GBPUSD", 0.5),
                                ("XTIUSD", 0.5)):
@@ -188,8 +188,8 @@ class TestExecution(unittest.TestCase):
         blackout = datetime(2026, 7, 14, 21, 30, tzinfo=UTC)
         st.run_cycle(self.active, self.guard, 16388, last_bars, now=blackout)
         fake_mt5.order_send.assert_not_called()
-        self.assertNotIn("XAUUSD", last_bars)   # bougie non consommee
-        # sortie du blackout : la meme cassure est reprise
+        self.assertNotIn("XAUUSD", last_bars)   # candle not consumed
+        # blackout over: the same breakout is picked up again
         after = datetime(2026, 7, 14, 23, 5, tzinfo=UTC)
         st.run_cycle(self.active, self.guard, 16388, last_bars, now=after)
         self.assertEqual(fake_mt5.order_send.call_count, 1)
@@ -208,7 +208,7 @@ class TestExecution(unittest.TestCase):
         pos = SimpleNamespace(ticket=7, symbol="XAUUSD.p", magic=5001,
                               type=0, volume=1.0, profit=42.0)
         fake_mt5.positions_get.return_value = [pos]
-        closes = [100.0] * (st.ENTRY_CHANNEL + 1) + [97.0, 97.0]  # sous canal
+        closes = [100.0] * (st.ENTRY_CHANNEL + 1) + [97.0, 97.0]  # below channel
         fake_mt5.copy_rates_from_pos.return_value = self._rates(closes)
         st.run_cycle(self.active, self.guard, 16388, {}, now=self.NOON)
         req = fake_mt5.order_send.call_args[0][0]
@@ -227,7 +227,7 @@ class TestExecution(unittest.TestCase):
         st.run_cycle(self.active, self.guard, 16388, {})
         self.assertTrue(self.guard.locked)
         reqs = [c[0][0] for c in fake_mt5.order_send.call_args_list]
-        self.assertEqual([r["position"] for r in reqs], [1])  # 1001 intact
+        self.assertEqual([r["position"] for r in reqs], [1])  # 1001 untouched
         fake_mt5.copy_rates_from_pos.assert_not_called()
 
 
@@ -242,7 +242,7 @@ class TestPersistence(unittest.TestCase):
         g._save()
         g.locked = True
         with mock.patch.object(st.os, "replace",
-                               side_effect=OSError("disque plein")):
+                               side_effect=OSError("disk full")):
             g._save()
         again = st.PeakGuard(path)
         self.assertFalse(again.locked)
