@@ -83,7 +83,7 @@
     <tbody>
       {% for p in state.positions %}
       <tr><td>{{ p.symbol }}</td>
-        <td><span class="badge badge-xs {{ 'badge-success' if p.sens == 'LONG' else 'badge-error' }}">{{ p.sens }}</span></td>
+        <td><span class="badge badge-xs {{ 'badge-info' if p.sens == 'LONG' else 'badge-warning' }}">{{ p.sens }}</span></td>
         <td class="font-mono">{{ p.volume }}</td>
         <td class="font-mono {{ 'text-success' if p.pnl > 0 else 'text-error' if p.pnl < 0 else '' }}">{{ "%+.2f"|format(p.pnl) }}</td>
         <td class="opacity-60">{{ p.strategie }}</td></tr>
