@@ -249,6 +249,25 @@ class TestAuth(unittest.TestCase):
             r = self.client.get("/api/state", auth=("sentinel", "mauvais"))
         self.assertEqual(r.status_code, 401)
 
+    def test_live_fragment_sens_colors_distinct_from_pnl(self):
+        # LONG/SHORT en bleu/ambre : vert/rouge restent reserves au PnL.
+        fake_mt5.positions_get.return_value = [
+            SimpleNamespace(ticket=1, symbol="XAUUSD", type=0, volume=0.1,
+                            profit=12.34, magic=1001),
+            SimpleNamespace(ticket=2, symbol="XAUUSD", type=1, volume=0.2,
+                            profit=-5.0, magic=1001),
+        ]
+        with mock.patch.object(dash, "_credentials",
+                               return_value=("sentinel", "bon")), \
+             mock.patch.object(dash, "BOTS_DIR", tempfile.mkdtemp()), \
+             mock.patch.object(dash, "LOG_DIR", tempfile.mkdtemp()):
+            r = self.client.get("/partial/live", auth=("sentinel", "bon"))
+        self.assertEqual(r.status_code, 200)
+        self.assertIn('badge-info">LONG', r.text)
+        self.assertIn('badge-warning">SHORT', r.text)
+        self.assertNotIn('badge-success">LONG', r.text)
+        self.assertNotIn('badge-error">SHORT', r.text)
+
     def test_good_password_serves_state_and_page(self):
         with mock.patch.object(dash, "_credentials",
                                return_value=("sentinel", "bon")), \
