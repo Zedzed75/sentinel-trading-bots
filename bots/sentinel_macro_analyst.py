@@ -420,6 +420,17 @@ def anthropic_key() -> str | None:
             or os.environ.get("ANTHROPIC_API_KEY"))
 
 
+def safe_print(text: str):
+    """Console-safe print: Windows consoles (cp1252) cannot encode the
+    report's emoji - degrade the display rather than crash before the
+    Telegram send (issue #23)."""
+    try:
+        print(text)
+    except UnicodeEncodeError:
+        enc = getattr(sys.stdout, "encoding", None) or "ascii"
+        print(text.encode(enc, errors="replace").decode(enc))
+
+
 async def main_async(once: bool = False) -> int:
     key = anthropic_key()
     if not key:
@@ -434,7 +445,7 @@ async def main_async(once: bool = False) -> int:
     if once:                          # immediate pipeline (manual test)
         now = datetime.now(timezone.utc)
         await collect_and_judge(llm, state, now)
-        print(state["report"])
+        safe_print(state["report"])
         if await send_telegram(state["report"]):
             state["last_send_day"] = now.date().isoformat()
             save_json_atomic(STATE_FILE, state)   # no double send
