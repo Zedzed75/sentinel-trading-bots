@@ -17,6 +17,7 @@ macro_config.json
 macro_weather.json
 macro_state.json
 macro_history.json
+macro_signal.json
 
 # Bot 8: arbitrage database, state and dashboard summary
 arbitrage.db

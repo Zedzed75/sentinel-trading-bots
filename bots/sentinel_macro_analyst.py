@@ -36,6 +36,7 @@ from datetime import datetime, timezone
 import httpx
 from anthropic import AsyncAnthropic
 
+import sentinel_macro_signals as msig
 from sentinel_macro_sources import build_dossier, collect_all
 
 # --- Configuration ---
@@ -52,6 +53,8 @@ DEFAULT_MODELS = {
     "agent_sentiment": "claude-haiku-4-5",
     "agent_flow_trader": "claude-haiku-4-5",
     "agent_juge_synthesizer": "claude-opus-4-8",
+    "agent_triage": "claude-haiku-4-5",
+    "agent_analyst": "claude-opus-4-8",
 }
 MAX_TOKENS, FETCH_TIMEOUT = 4000, 20.0  # hard cap per call; timeout
 
@@ -343,6 +346,57 @@ async def run_council(llm: AsyncAnthropic, sources: dict,
         return dict(NEUTRAL_FALLBACK)
 
 
+async def run_signal_pipeline(llm: AsyncAnthropic, sources: dict,
+                              now: datetime) -> dict:
+    """Layers 2+3 of the v2 pipeline (Cost Control by design).
+
+    ONE batch triage call (fast model, 1-10 scores) drops everything
+    below the threshold; only the qualified items reach the heavy
+    analyst, which answers through a strict JSON schema. Any failure
+    => NO_SIGNAL, without raising; the flag file and the macro_signals
+    table are written in every case (calendar continuity).
+    """
+    items, kept = [], []
+    signal = dict(msig.NO_SIGNAL)
+    try:
+        models = agent_models()
+        items = msig.flatten_items(sources)
+        if items:
+            resp = await _create(
+                llm, models["agent_triage"], system=msig.PROMPT_TRIAGE,
+                output_config={"format": {"type": "json_schema",
+                                          "schema": msig.TRIAGE_SCHEMA}},
+                messages=[{"role": "user",
+                           "content": msig.numbered(items)}])
+            verdict = json.loads(next(b.text for b in resp.content
+                                      if b.type == "text"))
+            kept = msig.qualified(items, verdict)
+        if kept:
+            dossier = ("QUALIFIED NEWS (triage >= "
+                       f"{msig.TRIAGE_THRESHOLD}/10):\n"
+                       + "\n".join(f"- {t}" for t in kept)
+                       + "\n\n" + build_dossier(sources, now,
+                                                only=("calendar",)))
+            resp = await _create(
+                llm, models["agent_analyst"], system=msig.PROMPT_ANALYST,
+                output_config={"format": {"type": "json_schema",
+                                          "schema": msig.SIGNAL_SCHEMA}},
+                messages=[{"role": "user", "content": dossier}])
+            signal = msig.clamp_signal(
+                json.loads(next(b.text for b in resp.content
+                                if b.type == "text")))
+    except Exception as exc:
+        log.error("Signal pipeline failed (%s): NO_SIGNAL fallback.", exc)
+        signal = dict(msig.NO_SIGNAL)
+    msig.write_signal(signal, now, len(kept), len(items))
+    msig.insert_signal_db(signal, now, len(kept), len(items))
+    log.info("Macro signal %s: %s %s (confidence %d, %d/%d qualified) "
+             "-> macro_signal.json + macro_signals", now.date(),
+             signal["asset_affected"], signal["action_for_mt5"],
+             signal["confidence_score"], len(kept), len(items))
+    return signal
+
+
 def format_report(verdict: dict, now: datetime) -> str:
     """Output 2: the structured Telegram report."""
     emoji, reco_dir, reco_range = WEATHER_META[verdict["weather"]]
@@ -395,6 +449,7 @@ async def collect_and_judge(llm: AsyncAnthropic, state: dict, now: datetime):
     verdict = await run_council(llm, sources, now)
     write_weather(verdict, now)
     append_history(verdict, now)
+    await run_signal_pipeline(llm, sources, now)
     state["last_collect_day"] = now.date().isoformat()
     state["report_day"] = now.date().isoformat()
     state["report"] = format_report(verdict, now)

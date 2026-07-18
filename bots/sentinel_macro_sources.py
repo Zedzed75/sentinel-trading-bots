@@ -44,9 +44,13 @@ PRIORITY_KEYWORDS = ("strait of hormuz", "bab al-mandab", "bab el-mandeb",
 # --- B. Influencers & social media --------------------------------------------
 SOCIAL_FIGURES = ("Donald Trump", "Elon Musk", "US State Department",
                   "China foreign ministry", "Federal Reserve")
-# Only messages touching our assets are kept
+# Only messages touching our assets are kept. Critical macro entities
+# (central banks and major releases) are part of the zero-token local
+# pre-filter: anything without one of these is dropped before any LLM.
 ASSET_KEYWORDS = ("tariff", "oil", "gold", "inflation", "fed", "china",
-                  "iran", "saudi", "opec", "dollar", "rates")
+                  "iran", "saudi", "opec", "dollar", "rates",
+                  "ecb", "boe", "fomc", "nfp", "payrolls", "cpi", "ppi",
+                  "gdp", "rate cut", "rate hike")
 
 # --- C. Macro-economy ---------------------------------------------------------
 CALENDAR_URL = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"

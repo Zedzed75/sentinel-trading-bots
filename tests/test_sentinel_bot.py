@@ -421,6 +421,59 @@ class TestMacroFilterFetch(unittest.TestCase):
             mf.vix(datetime(2026, 7, 15, 13, tzinfo=UTC))
             self.assertEqual(tk.call_count, 2)      # new day -> re-fetch
 
+# --- Macro gate (bot 7 v2 signal, default OFF) --------------------------------
+class TestMacroGate(unittest.TestCase):
+    NOW = datetime(2026, 7, 18, 14, tzinfo=UTC)
+
+    def setUp(self):
+        import json as _json
+        tmp = tempfile.mkdtemp()
+        self.cfg = os.path.join(tmp, "macro_config.json")
+        self.sig = os.path.join(tmp, "macro_signal.json")
+        self._json = _json
+        for p in (mock.patch.object(sb, "MACRO_CONFIG_FILE", self.cfg),
+                  mock.patch.object(sb, "MACRO_SIGNAL_FILE", self.sig)):
+            p.start()
+            self.addCleanup(p.stop)
+
+    def _write(self, cfg=None, sig=None):
+        if cfg is not None:
+            with open(self.cfg, "w", encoding="utf-8") as fh:
+                self._json.dump(cfg, fh)
+        if sig is not None:
+            with open(self.sig, "w", encoding="utf-8") as fh:
+                self._json.dump(sig, fh)
+
+    BLOCK = {"asset_affected": "XAUUSD", "action_for_mt5":
+             "BLOCK_BUY_SIGNALS", "rationale": "hawkish Fed",
+             "date": "2026-07-18"}
+
+    def test_disabled_by_default_never_blocks(self):
+        self._write(cfg={}, sig=self.BLOCK)
+        self.assertFalse(sb.macro_gate_blocks("XAUUSD.p", "BUY", self.NOW))
+        self._write(cfg={"macro_gate_enabled": False})
+        self.assertFalse(sb.macro_gate_blocks("XAUUSD.p", "BUY", self.NOW))
+
+    def test_enabled_blocks_matching_direction_and_asset_only(self):
+        self._write(cfg={"macro_gate_enabled": True}, sig=self.BLOCK)
+        self.assertTrue(sb.macro_gate_blocks("XAUUSD.p", "BUY", self.NOW))
+        self.assertFalse(sb.macro_gate_blocks("XAUUSD.p", "SELL", self.NOW))
+        self.assertFalse(sb.macro_gate_blocks("EURUSD.p", "BUY", self.NOW))
+
+    def test_stale_or_missing_signal_never_blocks(self):
+        self._write(cfg={"macro_gate_enabled": True},
+                    sig=dict(self.BLOCK, date="2026-07-17"))
+        self.assertFalse(sb.macro_gate_blocks("XAUUSD.p", "BUY", self.NOW))
+        os.unlink(self.sig)
+        self.assertFalse(sb.macro_gate_blocks("XAUUSD.p", "BUY", self.NOW))
+
+    def test_open_trade_short_circuits_on_gate(self):
+        fake_mt5.reset_mock()
+        with mock.patch.object(sb, "macro_gate_blocks", return_value=True):
+            self.assertFalse(sb.open_trade("XAUUSD.p", "BUY", 1001, "t"))
+        fake_mt5.order_send.assert_not_called()
+
+
 # --- Atomic persistence & heartbeat ------------------------------------------
 class TestPersistence(unittest.TestCase):
     def setUp(self):

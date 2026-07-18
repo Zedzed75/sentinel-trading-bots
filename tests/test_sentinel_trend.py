@@ -231,6 +231,42 @@ class TestExecution(unittest.TestCase):
         fake_mt5.copy_rates_from_pos.assert_not_called()
 
 
+class TestMacroGate(unittest.TestCase):
+    """Same gate as bot 1 (deliberate copy): default OFF, entries only."""
+
+    def test_disabled_by_default_and_wiring(self):
+        tmp = tempfile.mkdtemp()
+        with mock.patch.object(st, "MACRO_CONFIG_FILE",
+                               os.path.join(tmp, "cfg.json")), \
+             mock.patch.object(st, "MACRO_SIGNAL_FILE",
+                               os.path.join(tmp, "sig.json")):
+            self.assertFalse(st.macro_gate_blocks("XAUUSD.p", "BUY"))
+        fake_mt5.reset_mock()
+        with mock.patch.object(st, "macro_gate_blocks", return_value=True):
+            self.assertFalse(st.open_trend_trade(
+                "XAUUSD.p", "BUY", 5001,
+                pd.DataFrame({"high": [1.0], "low": [0.5],
+                              "close": [0.7]})))
+        fake_mt5.order_send.assert_not_called()
+
+    def test_enabled_blocks_today_matching_entry(self):
+        import json as _json
+        tmp = tempfile.mkdtemp()
+        cfg, sig = (os.path.join(tmp, "cfg.json"),
+                    os.path.join(tmp, "sig.json"))
+        with open(cfg, "w", encoding="utf-8") as fh:
+            _json.dump({"macro_gate_enabled": True}, fh)
+        with open(sig, "w", encoding="utf-8") as fh:
+            _json.dump({"asset_affected": "US500", "date": "2026-07-18",
+                        "action_for_mt5": "BLOCK_SELL_SIGNALS",
+                        "rationale": "squeeze risk"}, fh)
+        now = datetime(2026, 7, 18, 10, tzinfo=UTC)
+        with mock.patch.object(st, "MACRO_CONFIG_FILE", cfg), \
+             mock.patch.object(st, "MACRO_SIGNAL_FILE", sig):
+            self.assertTrue(st.macro_gate_blocks("US500.p", "SELL", now))
+            self.assertFalse(st.macro_gate_blocks("US500.p", "BUY", now))
+
+
 class TestPersistence(unittest.TestCase):
     def test_save_failure_preserves_previous_state(self):
         fd, path = tempfile.mkstemp(suffix=".json")
