@@ -86,6 +86,43 @@ def read_risk_scale(path: str = RISK_SCALE_FILE) -> float:
         return 1.0
 
 
+MACRO_SIGNAL_FILE = os.path.join(_DIR, "macro_signal.json")
+MACRO_CONFIG_FILE = os.path.join(_DIR, "macro_config.json")
+
+
+def macro_gate_blocks(symbol: str, direction: str,
+                      now: datetime | None = None) -> bool:
+    """True if bot 7's macro signal blocks this NEW entry today.
+
+    Enforcement requires "macro_gate_enabled": true in macro_config.json
+    (default false: informational only until the macro filter is
+    backtested - AMELIORATION_CONTINUE.md roadmap 4). A stale or missing
+    signal never blocks; exits and circuit breakers are never gated.
+    Deliberate copy in bots 1 and 3 (no cross-imports).
+    """
+    try:
+        with open(MACRO_CONFIG_FILE, encoding="utf-8") as fh:
+            if not json.load(fh).get("macro_gate_enabled"):
+                return False
+        with open(MACRO_SIGNAL_FILE, encoding="utf-8") as fh:
+            sig = json.load(fh)
+        now = now or datetime.now(timezone.utc)
+        if sig.get("date") != now.date().isoformat():
+            return False
+        if not symbol.upper().startswith(str(sig.get("asset_affected"))):
+            return False
+        action = sig.get("action_for_mt5")
+        blocked = ((action == "BLOCK_BUY_SIGNALS" and direction == "BUY")
+                   or (action == "BLOCK_SELL_SIGNALS"
+                       and direction == "SELL"))
+        if blocked:
+            log.warning("Macro gate: %s %s blocked by bot 7 (%s).",
+                        direction, symbol, sig.get("rationale", ""))
+        return blocked
+    except (OSError, ValueError):
+        return False
+
+
 # ----------------------------------------------------------------------------
 # Indicators and signals (pure, testable functions)
 # ----------------------------------------------------------------------------
@@ -223,6 +260,8 @@ def send_order(request: dict):
 def open_trend_trade(symbol: str, direction: str, magic: int,
                      df: pd.DataFrame, risk_mult: float = 1.0) -> bool:
     """Market entry, hard SL at 2xATR, no TP (channel exit)."""
+    if macro_gate_blocks(symbol, direction):
+        return False
     acc = mt5.account_info()
     sym = mt5.symbol_info(symbol)
     tick = mt5.symbol_info_tick(symbol)

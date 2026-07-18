@@ -1,5 +1,6 @@
 {
   "anthropic_api_key": "sk-ant-CHANGE-ME",
+  "macro_gate_enabled": false,
   "social_feeds": [],
   "bank_feeds": [],
   "model_mapping": {
@@ -7,6 +8,8 @@
     "agent_macro": "claude-fable-5",
     "agent_sentiment": "claude-haiku-4-5",
     "agent_flow_trader": "claude-haiku-4-5",
-    "agent_juge_synthesizer": "claude-opus-4-8"
+    "agent_juge_synthesizer": "claude-opus-4-8",
+    "agent_triage": "claude-haiku-4-5",
+    "agent_analyst": "claude-opus-4-8"
   }
 }

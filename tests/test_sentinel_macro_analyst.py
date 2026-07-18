@@ -90,7 +90,9 @@ class TestModelMapping(unittest.TestCase):
             "agent_macro": "claude-fable-5",
             "agent_sentiment": "claude-haiku-4-5",
             "agent_flow_trader": "claude-haiku-4-5",
-            "agent_juge_synthesizer": "claude-opus-4-8"})
+            "agent_juge_synthesizer": "claude-opus-4-8",
+            "agent_triage": "claude-haiku-4-5",
+            "agent_analyst": "claude-opus-4-8"})
 
     def test_config_overrides_one_agent(self):
         with mock.patch.object(ma, "load_json", return_value={
@@ -173,6 +175,84 @@ class TestCouncil(unittest.IsolatedAsyncioTestCase):
                                                DAY))["confidence"], 1.0)
 
 
+SIGNAL = {"asset_affected": "XAUUSD", "macro_bias": "BEARISH",
+          "confidence_score": 85,
+          "rationale": "Hawkish Fed tone pressures gold.",
+          "action_for_mt5": "BLOCK_BUY_SIGNALS"}
+
+
+class TestSignalPipeline(unittest.IsolatedAsyncioTestCase):
+    """v2 layers: Haiku batch triage -> Opus strict-JSON analyst."""
+
+    def setUp(self):
+        import sentinel_macro_signals as msig
+        self.msig = msig
+        tmp = tempfile.mkdtemp()
+        self.patches = [
+            mock.patch.object(msig, "SIGNAL_FILE",
+                              os.path.join(tmp, "macro_signal.json")),
+            mock.patch.object(msig, "SIGNALS_DB",
+                              os.path.join(tmp, "arbitrage.db")),
+        ]
+        for p in self.patches:
+            p.start()
+            self.addCleanup(p.stop)
+
+    def _signal_file(self):
+        with open(self.msig.SIGNAL_FILE, encoding="utf-8") as fh:
+            return json.load(fh)
+
+    async def test_triage_then_analyst_with_strict_schemas(self):
+        triage = {"scores": [{"index": 0, "score": 9},
+                             {"index": 1, "score": 3}]}
+        llm = _llm(normal=[_llm_response(json.dumps(triage)),
+                           _llm_response(json.dumps(SIGNAL))])
+        signal = await ma.run_signal_pipeline(
+            llm, dict(SOURCES, geo=["Fed shock", "noise item"]), DAY)
+        self.assertEqual(signal["action_for_mt5"], "BLOCK_BUY_SIGNALS")
+        calls = llm.messages.create.await_args_list
+        self.assertEqual(calls[0].kwargs["model"], "claude-haiku-4-5")
+        self.assertEqual(calls[0].kwargs["output_config"]["format"]
+                         ["schema"], self.msig.TRIAGE_SCHEMA)
+        self.assertEqual(calls[1].kwargs["model"], "claude-opus-4-8")
+        self.assertEqual(calls[1].kwargs["output_config"]["format"]
+                         ["schema"], self.msig.SIGNAL_SCHEMA)
+        self.assertIn("Fed shock", calls[1].kwargs["messages"][0]["content"])
+        self.assertNotIn("noise item",
+                         calls[1].kwargs["messages"][0]["content"])
+        self.assertEqual(self._signal_file()["asset_affected"], "XAUUSD")
+
+    async def test_low_scores_save_the_heavy_model(self):
+        triage = {"scores": [{"index": 0, "score": 5}]}
+        llm = _llm(normal=[_llm_response(json.dumps(triage))])
+        signal = await ma.run_signal_pipeline(llm, SOURCES, DAY)
+        self.assertEqual(signal, self.msig.NO_SIGNAL)
+        self.assertEqual(llm.messages.create.await_count, 1)  # triage only
+        self.assertEqual(self._signal_file()["action_for_mt5"], "NONE")
+
+    async def test_empty_sources_zero_llm_calls(self):
+        llm = _llm(normal=[])
+        signal = await ma.run_signal_pipeline(
+            llm, {"geo": [], "social": [], "banks": [], "calendar": []},
+            DAY)
+        self.assertEqual(signal, self.msig.NO_SIGNAL)
+        llm.messages.create.assert_not_awaited()
+
+    async def test_failure_falls_back_to_no_signal(self):
+        llm = _llm(normal=RuntimeError("API unavailable"))
+        signal = await ma.run_signal_pipeline(llm, SOURCES, DAY)
+        self.assertEqual(signal, self.msig.NO_SIGNAL)
+        self.assertEqual(self._signal_file()["confidence_score"], 0)
+
+    async def test_confidence_clamped(self):
+        triage = {"scores": [{"index": 0, "score": 9}]}
+        llm = _llm(normal=[_llm_response(json.dumps(triage)),
+                           _llm_response(json.dumps(
+                               dict(SIGNAL, confidence_score=150)))])
+        signal = await ma.run_signal_pipeline(llm, SOURCES, DAY)
+        self.assertEqual(signal["confidence_score"], 100)
+
+
 class TestWeatherFile(unittest.TestCase):
     def test_json_format_and_atomic_write(self):
         path = os.path.join(tempfile.mkdtemp(), "macro_weather.json")
@@ -195,6 +275,10 @@ class TestWeatherFile(unittest.TestCase):
                                    os.path.join(tmp, "s.json")), \
                  mock.patch.object(ma, "HISTORY_FILE",
                                    os.path.join(tmp, "h.json")), \
+                 mock.patch.object(ma.msig, "SIGNAL_FILE",
+                                   os.path.join(tmp, "sig.json")), \
+                 mock.patch.object(ma.msig, "SIGNALS_DB",
+                                   os.path.join(tmp, "arb.db")), \
                  mock.patch.object(ma, "collect_all", mock.AsyncMock(
                      return_value={"geo": [], "social": [], "calendar": [],
                                    "banks": []})):
