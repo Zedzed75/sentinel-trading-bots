@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import secrets
+import sqlite3
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -58,7 +59,12 @@ FLEET = tuple(dict(zip(_F, b)) for b in (
     (5, "sentinel_trade_analytics.py", "Analytics", 2700, (), None),
     (6, "sentinel_telegram.py", "Telegram", 300, (), None),
     (7, "sentinel_macro_analyst.py", "Macro Analyst", 300, (), None),
+    (8, "sentinel_arbitrage.py", "Arbitrage", 300, (), None),
 ))
+
+ARBITRAGE_DB = os.path.join(BOTS_DIR, "arbitrage.db")
+ARBITRAGE_SUMMARY = os.path.join(BOTS_DIR, "arbitrage_summary.json")
+ARBITRAGE_PER_PAGE = 15
 
 log = logging.getLogger("dashboard")
 
@@ -233,6 +239,65 @@ def build_state(now: datetime | None = None) -> dict:
     }
 
 
+# --- Arbitrage (bot 8): quant KPIs + technical vs semantic log ---------------
+def read_arbitrage_rows(asset: str = "", start: str = "", end: str = "",
+                        page: int = 1) -> tuple[list[dict], int, list[str]]:
+    """arbitrage_logs rows (bot 8), filtered and paginated, read-only.
+
+    Returns (rows, total, distinct assets); ([], 0, []) if the DB is
+    missing or unreadable - the interface shows a grey skeleton.
+    """
+    where, params = [], []
+    if asset:
+        where.append("asset = ?")
+        params.append(asset)
+    if start:
+        where.append("date_utc >= ?")
+        params.append(start)
+    if end:
+        where.append("date_utc <= ?")
+        params.append(end + "T23:59:59+00:00")
+    clause = (" WHERE " + " AND ".join(where)) if where else ""
+    try:
+        con = sqlite3.connect(f"file:{ARBITRAGE_DB}?mode=ro", uri=True)
+        try:
+            total = con.execute("SELECT COUNT(*) FROM arbitrage_logs"
+                                + clause, params).fetchone()[0]
+            cur = con.execute(
+                "SELECT date_utc, asset, direction, mt5_action, bot7_view,"
+                " is_aligned, pnl, winner_arbitrage FROM arbitrage_logs"
+                + clause + " ORDER BY date_utc DESC LIMIT ? OFFSET ?",
+                params + [ARBITRAGE_PER_PAGE,
+                          (max(page, 1) - 1) * ARBITRAGE_PER_PAGE])
+            rows = [{"date": d[:16].replace("T", " "), "asset": a,
+                     "direction": di, "mt5_action": act, "bot7_view": view,
+                     "is_aligned": (None if al is None else bool(al)),
+                     "pnl": p, "winner": winner}
+                    for d, a, di, act, view, al, p, winner in cur.fetchall()]
+            assets = [r[0] for r in con.execute(
+                "SELECT DISTINCT asset FROM arbitrage_logs"
+                " WHERE asset != '-' ORDER BY asset")]
+        finally:
+            con.close()
+        return rows, total, assets
+    except sqlite3.Error:
+        return [], 0, []
+
+
+def arbitrage_state(asset: str = "", start: str = "", end: str = "",
+                    page: int = 1) -> dict:
+    """KPIs (bot 8's summary file) + filtered table for the interface."""
+    if MOCK:
+        import mock_dashboard_data
+        return mock_dashboard_data.get_arbitrage()
+    rows, total, assets = read_arbitrage_rows(asset, start, end, page)
+    pages = max((total + ARBITRAGE_PER_PAGE - 1) // ARBITRAGE_PER_PAGE, 1)
+    return {"metrics": load_json(ARBITRAGE_SUMMARY),
+            "rows": rows, "total": total, "assets": assets,
+            "page": min(max(page, 1), pages), "pages": pages,
+            "asset": asset, "start": start, "end": end}
+
+
 # --- Emergency actions (Basic Auth + hx-confirm on the interface side) ---
 def close_all_positions() -> int:
     """Close all positions of the Sentinel magics via opposite orders."""
@@ -308,9 +373,24 @@ def partial_live(request: Request, _: str = Depends(require_auth)):
                                       {"state": build_state()})
 
 
+@app.get("/partial/arbitrage")
+def partial_arbitrage(request: Request, _: str = Depends(require_auth),
+                      asset: str = "", start: str = "", end: str = "",
+                      page: int = 1):
+    return templates.TemplateResponse(
+        request, "_arbitrage.html",
+        {"arb": arbitrage_state(asset, start, end, page)})
+
+
 @app.get("/api/state")
 def api_state(_: str = Depends(require_auth)) -> dict:
     return build_state()
+
+
+@app.get("/api/arbitrage")
+def api_arbitrage(_: str = Depends(require_auth), asset: str = "",
+                  start: str = "", end: str = "", page: int = 1) -> dict:
+    return arbitrage_state(asset, start, end, page)
 
 
 _MOCK_MSG = "<span class='text-warning'>mock mode: no action</span>"

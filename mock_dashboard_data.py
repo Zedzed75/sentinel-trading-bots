@@ -47,6 +47,8 @@ def get_state() -> dict:
              "day_pnl": 0, "day_trades": 0, "trade": False},
             {"id": 7, "name": "Macro Analyst", "status": "active",
              "day_pnl": 0, "day_trades": 0, "trade": False},
+            {"id": 8, "name": "Arbitrage", "status": "active",
+             "day_pnl": 0, "day_trades": 0, "trade": False},
         ],
         "daily_gauge": {"pct": -1.92, "used": 0.48, "limit_pct": -4.0},
         "global_lock": False,
@@ -60,4 +62,31 @@ def get_state() -> dict:
              "volume": 0.11, "pnl": -12.50, "strategy": "breakout"},
         ],
         "system": {"cpu": 17.0, "ram": 47.0, "watchdog": True},
+    }
+
+
+def get_arbitrage() -> dict:
+    """Fake bot 8 data for the KPI cards and the arbitrage table."""
+    return {
+        "metrics": {"trades": 21, "win_rate": 61.90, "profit_factor": 1.68,
+                    "sharpe": 2.15, "max_drawdown": 740.0,
+                    "max_drawdown_pct": -7.40, "total_pnl": 1240.50},
+        "rows": [
+            {"date": "2026-07-17 21:05", "asset": "XAUUSD.p",
+             "direction": "LONG", "mt5_action": "Long execution (breakout)",
+             "bot7_view": "STORMY (US CPI at 14:30 UTC)",
+             "is_aligned": True, "pnl": 450.00, "winner": "ALIGNED."},
+            {"date": "2026-07-17 18:40", "asset": "SpotBrent",
+             "direction": "SHORT", "mt5_action": "Short execution (statarb)",
+             "bot7_view": "STORMY (US CPI at 14:30 UTC)",
+             "is_aligned": False, "pnl": -350.00,
+             "winner": "Bot 7 (macro) was right. The semantic filter saw "
+                       "it coming."},
+            {"date": "2026-07-16 15:12", "asset": "EURUSD.p",
+             "direction": "SHORT", "mt5_action": "Short execution (reversion)",
+             "bot7_view": "CALM (quiet macro calendar)",
+             "is_aligned": True, "pnl": 86.40, "winner": "ALIGNED."},
+        ],
+        "total": 3, "assets": ["EURUSD.p", "SpotBrent", "XAUUSD.p"],
+        "page": 1, "pages": 1, "asset": "", "start": "", "end": "",
     }

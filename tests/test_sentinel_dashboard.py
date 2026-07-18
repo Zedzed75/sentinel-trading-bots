@@ -7,6 +7,7 @@ interface (build_state always answers).
 
 import json
 import os
+import sqlite3
 import sys
 import tempfile
 import unittest
@@ -70,7 +71,7 @@ class TestRobustReads(unittest.TestCase):
              mock.patch.object(dash, "TRADES_CSV", "missing.csv"):
             state = dash.build_state(NOW)
         self.assertFalse(state["account"]["ok"])
-        self.assertEqual(len(state["bots"]), 7)
+        self.assertEqual(len(state["bots"]), 8)
         self.assertTrue(all(b["status"] == "stopped" for b in state["bots"]))
         self.assertIsNone(state["daily_gauge"]["pct"])
         self.assertFalse(state["global_lock"])
@@ -237,10 +238,110 @@ class TestMockMode(unittest.TestCase):
                                return_value=("sentinel", "bon")):
             state = dash.build_state()
             self.assertIn("MOCK", state["time"])
-            self.assertEqual(len(state["bots"]), 7)
+            self.assertEqual(len(state["bots"]), 8)
             self.assertEqual(state["weather"]["weather"], "STORMY")
             r = client.post("/api/panic", auth=("sentinel", "bon"))
         self.assertIn("mock mode", r.text)
+
+
+class TestArbitrage(unittest.TestCase):
+    """Bot 8 section: KPI cards, filtered/paginated datatable, UX rules."""
+
+    ROWS = [
+        # (date_utc, asset, direction, mt5_action, bot7_view, aligned, pnl, winner)
+        ("2026-07-17T21:05:00+00:00", "XAUUSD.p", "LONG",
+         "Long execution (breakout)", "STORMY (CPI)", 1, 450.0, "ALIGNED."),
+        ("2026-07-17T18:40:00+00:00", "SpotBrent", "SHORT",
+         "Short execution (statarb)", "STORMY (CPI)", 0, -350.0,
+         "Bot 7 (macro) was right. The semantic filter saw it coming."),
+        ("2026-07-16T15:12:00+00:00", "EURUSD.p", "SHORT",
+         "Short execution (reversion)", "CALM (quiet)", 1, 86.4, "ALIGNED."),
+    ]
+
+    def setUp(self):
+        self.client = TestClient(dash.app)
+        self.auth = ("sentinel", "bon")
+        tmp = tempfile.mkdtemp()
+        self.db = os.path.join(tmp, "arbitrage.db")
+        con = sqlite3.connect(self.db)
+        con.execute("CREATE TABLE arbitrage_logs (id INTEGER PRIMARY KEY"
+                    " AUTOINCREMENT, date_utc TIMESTAMP, asset VARCHAR,"
+                    " direction VARCHAR, mt5_action VARCHAR, bot7_view"
+                    " VARCHAR, is_aligned BOOLEAN, pnl FLOAT,"
+                    " winner_arbitrage VARCHAR)")
+        con.executemany("INSERT INTO arbitrage_logs (date_utc, asset,"
+                        " direction, mt5_action, bot7_view, is_aligned,"
+                        " pnl, winner_arbitrage) VALUES (?,?,?,?,?,?,?,?)",
+                        self.ROWS)
+        con.commit()
+        con.close()
+        self.summary = os.path.join(tmp, "arbitrage_summary.json")
+        with open(self.summary, "w", encoding="utf-8") as fh:
+            json.dump({"trades": 3, "win_rate": 61.90, "profit_factor": 1.68,
+                       "sharpe": 2.15, "max_drawdown": 740.0,
+                       "max_drawdown_pct": -7.40, "total_pnl": 186.4}, fh)
+        for p in (mock.patch.object(dash, "ARBITRAGE_DB", self.db),
+                  mock.patch.object(dash, "ARBITRAGE_SUMMARY", self.summary),
+                  mock.patch.object(dash, "_credentials",
+                                    return_value=self.auth)):
+            p.start()
+            self.addCleanup(p.stop)
+
+    def _get(self, url):
+        return self.client.get(url, auth=self.auth)
+
+    def test_kpi_cards_and_thresholds(self):
+        html = self._get("/partial/arbitrage").text
+        self.assertIn("61.90%", html)                 # win rate
+        self.assertIn('text-success">1.68', html)     # PF >= 1.5 -> green
+        # threshold colors: amber between 1.1 and 1.5, red below 1.1
+        with open(self.summary, "w", encoding="utf-8") as fh:
+            json.dump({"trades": 3, "win_rate": 40.0, "profit_factor": 1.25,
+                       "sharpe": None, "max_drawdown": 0.0,
+                       "max_drawdown_pct": None, "total_pnl": 0.0}, fh)
+        self.assertIn('text-warning">1.25', self._get("/partial/arbitrage").text)
+        with open(self.summary, "w", encoding="utf-8") as fh:
+            json.dump({"trades": 3, "win_rate": 40.0, "profit_factor": 0.80,
+                       "sharpe": None, "max_drawdown": 0.0,
+                       "max_drawdown_pct": None, "total_pnl": 0.0}, fh)
+        self.assertIn('text-error">0.80', self._get("/partial/arbitrage").text)
+
+    def test_table_ux_rules(self):
+        html = self._get("/partial/arbitrage").text
+        self.assertIn('badge-success badge-xs">YES', html)
+        self.assertIn('badge-warning badge-xs">NO', html)
+        self.assertIn("+450.00", html)
+        self.assertIn("-350.00", html)
+        self.assertIn("italic opacity-60", html)      # divergent row greyed
+        self.assertIn("-7.40%", html)                 # max DD card
+        self.assertIn("2.15", html)                   # sharpe card
+
+    def test_asset_filter_and_api(self):
+        r = self._get("/api/arbitrage?asset=XAUUSD.p").json()
+        self.assertEqual(r["total"], 1)
+        self.assertEqual(r["rows"][0]["asset"], "XAUUSD.p")
+        self.assertEqual(sorted(r["assets"]),
+                         ["EURUSD.p", "SpotBrent", "XAUUSD.p"])
+
+    def test_date_filter(self):
+        r = self._get("/api/arbitrage?start=2026-07-17&end=2026-07-17").json()
+        self.assertEqual(r["total"], 2)
+        r2 = self._get("/api/arbitrage?end=2026-07-16").json()
+        self.assertEqual(r2["total"], 1)
+
+    def test_pagination(self):
+        with mock.patch.object(dash, "ARBITRAGE_PER_PAGE", 2):
+            r = self._get("/api/arbitrage?page=2").json()
+        self.assertEqual(r["pages"], 2)
+        self.assertEqual(len(r["rows"]), 1)
+        self.assertEqual(r["rows"][0]["asset"], "EURUSD.p")  # oldest last
+
+    def test_missing_db_never_500(self):
+        with mock.patch.object(dash, "ARBITRAGE_DB",
+                               os.path.join(tempfile.mkdtemp(), "no.db")):
+            r = self._get("/partial/arbitrage")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("no arbitrage yet", r.text)
 
 
 class TestAuth(unittest.TestCase):
@@ -289,7 +390,7 @@ class TestAuth(unittest.TestCase):
             r = self.client.get("/api/state", auth=("sentinel", "bon"))
             page = self.client.get("/", auth=("sentinel", "bon"))
         self.assertEqual(r.status_code, 200)
-        self.assertEqual(len(r.json()["bots"]), 7)
+        self.assertEqual(len(r.json()["bots"]), 8)
         self.assertEqual(page.status_code, 200)
         self.assertIn("Sentinel", page.text)
 

@@ -18,6 +18,11 @@ macro_weather.json
 macro_state.json
 macro_history.json
 
+# Bot 8: arbitrage database, state and dashboard summary
+arbitrage.db
+arbitrage_state.json
+arbitrage_summary.json
+
 # Runtime logs
 logs/
 

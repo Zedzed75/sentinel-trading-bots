@@ -15,6 +15,12 @@
     <h1 class="text-xl font-bold tracking-wide">🛡️ SENTINEL <span class="text-xs opacity-50 font-normal">v1.0.0{% if mock %} · MOCK{% endif %}</span></h1>
   </div>
 
+  <!-- Elite quant KPIs + arbitrage log (bot 8). Loaded once: the data
+       changes daily at 22:00 UTC; a periodic refresh would clobber the
+       user's filters. Reload the page for fresh numbers. -->
+  <div id="arbitrage" hx-get="partial/arbitrage" hx-trigger="load"
+       hx-swap="innerHTML"></div>
+
   <!-- Live fragment: refreshed by HTMX every 10 s -->
   <div id="live" hx-get="partial/live" hx-trigger="every 10s" hx-swap="innerHTML">
     {% include "_live.html" %}
