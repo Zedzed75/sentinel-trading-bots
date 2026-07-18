@@ -26,6 +26,10 @@
     {% include "_live.html" %}
   </div>
 
+  <!-- Macro signal (bot 7 v2): daily, loaded once like the arbitrage block -->
+  <div id="signal" hx-get="partial/signal" hx-trigger="load"
+       hx-swap="innerHTML"></div>
+
   <!-- C. Debate & Insights (bot 7) — static: changes once per day -->
   {% set W = state.weather %}
   <div class="card bg-base-100 shadow">

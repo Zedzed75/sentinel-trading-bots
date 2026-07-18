@@ -61,7 +61,10 @@ Debate/Bank Targets/Conflict tabs, balance/equity/margin (alert < 150%),
 RUNNING/STOPPED status and day PnL of the 8 bots, -4% circuit-breaker
 gauge, open positions, CPU/RAM/watchdog. On top: bot 8's quant KPI cards
 (win rate, profit factor with color thresholds, Sharpe, max drawdown)
-and the filterable/paginated technical-vs-semantic arbitrage table. Two confirmation-protected
+and the filterable/paginated technical-vs-semantic arbitrage table.
+Below the live block: bot 7 v2's macro-signal card (asset, bias, action,
+confidence, rationale, GATE ON/OFF badge) with the recent signal history
+from the `macro_signals` table. Two confirmation-protected
 actions: 🚨 PANIC (closes all Sentinel positions and engages the GLOBAL
 lock — human unlock) and 🔄 FORCE RUN bot 7 (immediate weather). Missing/
 corrupt files => grey skeletons, never a 500.

@@ -298,6 +298,45 @@ def arbitrage_state(asset: str = "", start: str = "", end: str = "",
             "asset": asset, "start": start, "end": end}
 
 
+# --- Macro signal (bot 7 v2): today's flag + recent history ------------------
+MACRO_SIGNAL_FILE = os.path.join(BOTS_DIR, "macro_signal.json")
+MACRO_CONFIG_FILE = os.path.join(BOTS_DIR, "macro_config.json")
+SIGNAL_HISTORY_SHOWN = 10
+
+
+def signal_state(now: datetime | None = None) -> dict:
+    """Today's macro signal + gate switch + recent history.
+
+    Only the gate flag is read from macro_config.json - the file also
+    holds the API key, which must NEVER reach the interface.
+    """
+    if MOCK:
+        import mock_dashboard_data
+        return mock_dashboard_data.get_signal()
+    now = now or datetime.now(timezone.utc)
+    sig = load_json(MACRO_SIGNAL_FILE)
+    today = sig if sig.get("date") == now.date().isoformat() else None
+    history = []
+    try:
+        con = sqlite3.connect(f"file:{ARBITRAGE_DB}?mode=ro", uri=True)
+        try:
+            history = [
+                {"date": d[:10], "asset": a, "bias": b, "confidence": c,
+                 "action": act, "kept": k, "total": t}
+                for d, a, b, c, act, k, t in con.execute(
+                    "SELECT date_utc, asset_affected, macro_bias,"
+                    " confidence_score, action_for_mt5, triage_kept,"
+                    " triage_total FROM macro_signals ORDER BY date_utc"
+                    " DESC LIMIT ?", (SIGNAL_HISTORY_SHOWN,))]
+        finally:
+            con.close()
+    except sqlite3.Error:
+        pass
+    return {"today": today, "history": history,
+            "gate_enabled": bool(load_json(MACRO_CONFIG_FILE)
+                                 .get("macro_gate_enabled"))}
+
+
 # --- Emergency actions (Basic Auth + hx-confirm on the interface side) ---
 def close_all_positions() -> int:
     """Close all positions of the Sentinel magics via opposite orders."""
@@ -382,9 +421,20 @@ def partial_arbitrage(request: Request, _: str = Depends(require_auth),
         {"arb": arbitrage_state(asset, start, end, page)})
 
 
+@app.get("/partial/signal")
+def partial_signal(request: Request, _: str = Depends(require_auth)):
+    return templates.TemplateResponse(request, "_signal.html",
+                                      {"sig": signal_state()})
+
+
 @app.get("/api/state")
 def api_state(_: str = Depends(require_auth)) -> dict:
     return build_state()
+
+
+@app.get("/api/signal")
+def api_signal(_: str = Depends(require_auth)) -> dict:
+    return signal_state()
 
 
 @app.get("/api/arbitrage")
