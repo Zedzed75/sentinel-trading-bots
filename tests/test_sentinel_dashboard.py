@@ -344,6 +344,91 @@ class TestArbitrage(unittest.TestCase):
         self.assertIn("no arbitrage yet", r.text)
 
 
+class TestMacroSignalSection(unittest.TestCase):
+    """Bot 7 v2 signal card: today's flag, gate badge, history, no key leak."""
+
+    TODAY = datetime.now(timezone.utc).date().isoformat()
+
+    def setUp(self):
+        self.client = TestClient(dash.app)
+        self.auth = ("sentinel", "bon")
+        tmp = tempfile.mkdtemp()
+        self.sig = os.path.join(tmp, "macro_signal.json")
+        self.cfg = os.path.join(tmp, "macro_config.json")
+        self.db = os.path.join(tmp, "arbitrage.db")
+        with open(self.sig, "w", encoding="utf-8") as fh:
+            json.dump({"asset_affected": "XAUUSD", "macro_bias": "BEARISH",
+                       "confidence_score": 85, "rationale": "hawkish Fed",
+                       "action_for_mt5": "BLOCK_BUY_SIGNALS",
+                       "triage_kept": 3, "triage_total": 42,
+                       "date": self.TODAY}, fh)
+        with open(self.cfg, "w", encoding="utf-8") as fh:
+            json.dump({"anthropic_api_key": "sk-ant-SECRET-KEY-123",
+                       "macro_gate_enabled": False}, fh)
+        con = sqlite3.connect(self.db)
+        con.execute("CREATE TABLE macro_signals (id INTEGER PRIMARY KEY"
+                    " AUTOINCREMENT, date_utc TIMESTAMP, asset_affected"
+                    " VARCHAR, macro_bias VARCHAR, confidence_score"
+                    " INTEGER, rationale VARCHAR, action_for_mt5 VARCHAR,"
+                    " triage_kept INTEGER, triage_total INTEGER)")
+        con.execute("INSERT INTO macro_signals (date_utc, asset_affected,"
+                    " macro_bias, confidence_score, rationale,"
+                    " action_for_mt5, triage_kept, triage_total) VALUES"
+                    " ('2026-07-17T08:05:00+00:00', 'XTIUSD', 'BULLISH',"
+                    " 72, 'supply risk', 'BLOCK_SELL_SIGNALS', 2, 38)")
+        con.commit()
+        con.close()
+        for p in (mock.patch.object(dash, "MACRO_SIGNAL_FILE", self.sig),
+                  mock.patch.object(dash, "MACRO_CONFIG_FILE", self.cfg),
+                  mock.patch.object(dash, "ARBITRAGE_DB", self.db),
+                  mock.patch.object(dash, "_credentials",
+                                    return_value=self.auth)):
+            p.start()
+            self.addCleanup(p.stop)
+
+    def test_fragment_shows_signal_and_gate_off(self):
+        html = self.client.get("/partial/signal", auth=self.auth).text
+        self.assertIn("XAUUSD", html)
+        self.assertIn("BEARISH", html)
+        self.assertIn("BLOCK_BUY_SIGNALS", html)
+        self.assertIn("85%", html)
+        self.assertIn("GATE OFF", html)
+        self.assertIn("BULLISH", html)            # history row
+        self.assertIn("2/38", html)               # triage counts
+
+    def test_gate_on_badge(self):
+        with open(self.cfg, "w", encoding="utf-8") as fh:
+            json.dump({"anthropic_api_key": "sk-ant-SECRET-KEY-123",
+                       "macro_gate_enabled": True}, fh)
+        self.assertIn("GATE ON",
+                      self.client.get("/partial/signal", auth=self.auth).text)
+
+    def test_api_key_never_leaks(self):
+        for url in ("/partial/signal", "/api/signal"):
+            self.assertNotIn("sk-ant",
+                             self.client.get(url, auth=self.auth).text)
+
+    def test_stale_signal_shows_skeleton(self):
+        with open(self.sig, "w", encoding="utf-8") as fh:
+            json.dump({"asset_affected": "XAUUSD", "date": "2026-07-01",
+                       "action_for_mt5": "BLOCK_BUY_SIGNALS"}, fh)
+        html = self.client.get("/partial/signal", auth=self.auth).text
+        self.assertIn("no signal for today", html)
+        self.assertIsNone(self.client.get("/api/signal",
+                                          auth=self.auth).json()["today"])
+
+    def test_missing_db_and_files_never_500(self):
+        tmp = tempfile.mkdtemp()
+        with mock.patch.object(dash, "MACRO_SIGNAL_FILE",
+                               os.path.join(tmp, "none.json")), \
+             mock.patch.object(dash, "MACRO_CONFIG_FILE",
+                               os.path.join(tmp, "none2.json")), \
+             mock.patch.object(dash, "ARBITRAGE_DB",
+                               os.path.join(tmp, "none.db")):
+            r = self.client.get("/partial/signal", auth=self.auth)
+        self.assertEqual(r.status_code, 200)
+
+
 class TestAuth(unittest.TestCase):
     def setUp(self):
         self.client = TestClient(dash.app)

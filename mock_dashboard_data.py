@@ -65,6 +65,27 @@ def get_state() -> dict:
     }
 
 
+def get_signal() -> dict:
+    """Fake bot 7 v2 macro signal for the dashboard section."""
+    return {
+        "today": {"asset_affected": "XAUUSD", "macro_bias": "BEARISH",
+                  "confidence_score": 85,
+                  "rationale": "Powell's hawkish tone strengthens the DXY,"
+                               " short-term pressure on gold.",
+                  "action_for_mt5": "BLOCK_BUY_SIGNALS",
+                  "triage_kept": 3, "triage_total": 42,
+                  "date": datetime.now(timezone.utc).date().isoformat()},
+        "history": [
+            {"date": "2026-07-17", "asset": "XTIUSD", "bias": "BULLISH",
+             "confidence": 72, "action": "BLOCK_SELL_SIGNALS",
+             "kept": 2, "total": 38},
+            {"date": "2026-07-16", "asset": "NONE", "bias": "NEUTRAL",
+             "confidence": 0, "action": "NONE", "kept": 0, "total": 31},
+        ],
+        "gate_enabled": False,
+    }
+
+
 def get_arbitrage() -> dict:
     """Fake bot 8 data for the KPI cards and the arbitrage table."""
     return {

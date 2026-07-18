@@ -1,0 +1,39 @@
+{# Bot 7 v2: today's macro signal + recent signal history #}
+<div class="card bg-base-100 shadow"><div class="card-body py-4">
+  <h2 class="card-title text-base">🧭 Macro signal (Bot 7 v2)
+    {% if sig.gate_enabled %}<span class="badge badge-error badge-sm" title="action_for_mt5 is enforced on new entries">GATE ON</span>
+    {% else %}<span class="badge badge-ghost badge-sm" title="informational only - macro_gate_enabled is false">GATE OFF</span>{% endif %}
+  </h2>
+
+  {% set t = sig.today %}
+  {% if t %}
+  <div class="flex flex-wrap items-center gap-2">
+    <span class="badge badge-neutral">{{ t.asset_affected }}</span>
+    <span class="badge {{ 'badge-success' if t.macro_bias == 'BULLISH' else 'badge-error' if t.macro_bias == 'BEARISH' else 'badge-ghost' }}">{{ t.macro_bias }}</span>
+    <span class="badge {{ 'badge-warning' if t.action_for_mt5 != 'NONE' else 'badge-ghost' }}">{{ t.action_for_mt5 }}</span>
+    <span class="text-sm opacity-70">confidence <b>{{ t.confidence_score }}%</b></span>
+    <span class="text-xs opacity-50">triage {{ t.triage_kept }}/{{ t.triage_total }}</span>
+  </div>
+  <p class="text-sm italic opacity-80">“{{ t.rationale }}”</p>
+  {% else %}
+  <div class="space-y-2">
+    <div class="skeleton h-4 w-full"></div>
+    <p class="text-xs opacity-50">no signal for today yet — the pipeline runs at 08:00 UTC (or FORCE RUN bot 7)</p>
+  </div>
+  {% endif %}
+
+  {% if sig.history %}
+  <div class="overflow-x-auto"><table class="table table-xs">
+    <thead><tr><th>Date</th><th>Asset</th><th>Bias</th><th>Conf.</th><th>Action</th><th>Triage</th></tr></thead>
+    <tbody>
+      {% for h in sig.history %}
+      <tr><td>{{ h.date }}</td><td>{{ h.asset }}</td>
+        <td class="{{ 'text-success' if h.bias == 'BULLISH' else 'text-error' if h.bias == 'BEARISH' else 'opacity-60' }}">{{ h.bias }}</td>
+        <td class="font-mono">{{ h.confidence }}%</td>
+        <td class="{{ 'text-warning' if h.action != 'NONE' else 'opacity-60' }}">{{ h.action }}</td>
+        <td class="opacity-60">{{ h.kept }}/{{ h.total }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table></div>
+  {% endif %}
+</div></div>
