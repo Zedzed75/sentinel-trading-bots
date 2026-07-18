@@ -243,6 +243,23 @@ class TestMockMode(unittest.TestCase):
             r = client.post("/api/panic", auth=("sentinel", "bon"))
         self.assertIn("mock mode", r.text)
 
+    def test_insights_terminal_look_no_chat_bubbles(self):
+        # institutional terminal redesign: flat bordered cards, no bubbles
+        client = TestClient(dash.app)
+        with mock.patch.object(dash, "MOCK", True), \
+             mock.patch.object(dash, "_credentials",
+                               return_value=("sentinel", "bon")):
+            page = client.get("/", auth=("sentinel", "bon")).text
+        self.assertNotIn("chat-bubble", page)
+        self.assertNotIn("chat chat-start", page)
+        self.assertNotIn("tabs-lifted", page)
+        self.assertIn("ins-card", page)
+        self.assertIn("border-left-color:#3B82F6", page)   # geopolitics
+        self.assertIn("border-left-color:#10B981", page)   # macro
+        self.assertIn("border-left-color:#F59E0B", page)   # sentiment
+        self.assertIn("margin-bottom: 1.5rem", page)       # nav isolation
+        self.assertIn("gap: 2rem", page)                   # tab alignment
+
 
 class TestArbitrage(unittest.TestCase):
     """Bot 8 section: KPI cards, filtered/paginated datatable, UX rules."""
