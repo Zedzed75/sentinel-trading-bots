@@ -274,6 +274,35 @@ class TestHistory(unittest.TestCase):
         self.assertEqual(ma.NEUTRAL_FALLBACK["primary_asset"], "NONE")
 
 
+class TestSafePrint(unittest.TestCase):
+    """Regression for issue #23: --once must not crash on cp1252 consoles."""
+
+    def _cp1252_stdout(self):
+        import io
+        return io.TextIOWrapper(io.BytesIO(), encoding="cp1252",
+                                errors="strict")
+
+    def test_plain_print_would_crash_but_safe_print_does_not(self):
+        report = ma.format_report(VERDICT, DAY)   # starts with an emoji
+        fake = self._cp1252_stdout()
+        with mock.patch.object(sys, "stdout", fake):
+            with self.assertRaises(UnicodeEncodeError):
+                print(report, flush=True)         # the old behaviour
+            ma.safe_print(report)                 # must not raise
+            fake.flush()
+        payload = fake.buffer.getvalue().decode("cp1252")
+        self.assertIn("MARKET WEATHER", payload)  # report still displayed
+
+    def test_safe_print_passthrough_on_utf8(self):
+        import io
+        fake = io.TextIOWrapper(io.BytesIO(), encoding="utf-8")
+        with mock.patch.object(sys, "stdout", fake):
+            ma.safe_print("héllo \U0001f916")
+            fake.flush()
+        self.assertIn("\U0001f916",
+                      fake.buffer.getvalue().decode("utf-8"))
+
+
 class TestSources(unittest.TestCase):
     """Ingestion pipeline: parsing, noise filtering, priorities."""
 
