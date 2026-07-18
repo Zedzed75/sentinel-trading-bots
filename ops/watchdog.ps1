@@ -1,6 +1,6 @@
 # Sentinel fleet watchdog.
-# - Checks every 30 s that each bot has a live process, restarts otherwise
-#   (orchestrator first in the list).
+# - Checks every 30 s that each bot (and the mobile dashboard) has a live
+#   process, restarts otherwise (orchestrator first in the list).
 # - Captures each bot's stdout/stderr into logs/<bot>.log (10 MB rotation).
 # - Writes logs/status.html on each cycle (auto-refreshing page, open it
 #   in a browser to monitor the fleet).
@@ -19,11 +19,18 @@ $Bots = @(
     "sentinel_trade_analytics.py",
     "sentinel_telegram.py",
     "sentinel_macro_analyst.py",
-    "sentinel_arbitrage.py"
+    "sentinel_arbitrage.py",
+    "sentinel_dashboard.py"
 )
+# sentinel_dashboard.py lives at the repo root; every bot lives in bots/.
+function Get-BotDir($bot) {
+    if ($bot -eq "sentinel_dashboard.py") { return $Root }
+    return $BotsDir
+}
 # Max heartbeat age (logs/<bot>.hb, written after each successful cycle).
 # Beyond that: process alive but frozen -> kill + restart. Bot 5 has a
 # 15-min cycle, bot 6 sometimes waits for a token: adapted thresholds.
+# The dashboard writes no heartbeat (request-driven): process check only.
 $HbLimitSec = @{
     "sentinel_risk_orchestrator.py" = 300
     "sentinel_bot.py"               = 300
@@ -146,7 +153,7 @@ while ($true) {
             Send-Telegram "ALERT: $bot was stopped - restarted by the watchdog"
             Start-Process cmd `
                 -ArgumentList "/c python -u $bot >> `"$logFile`" 2>&1" `
-                -WorkingDirectory $BotsDir -WindowStyle Hidden
+                -WorkingDirectory (Get-BotDir $bot) -WindowStyle Hidden
             $rows += [pscustomobject]@{
                 Bot = $bot; Ok = $false
                 ProcId = "-"; Up = "-"; Log = $logInfo
