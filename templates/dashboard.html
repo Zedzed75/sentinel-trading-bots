@@ -7,6 +7,33 @@
 <link href="https://cdn.jsdelivr.net/npm/daisyui@4/dist/full.min.css" rel="stylesheet" type="text/css">
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://cdn.jsdelivr.net/npm/htmx.org@2/dist/htmx.min.js"></script>
+<style>
+  /* Debate & Insights — institutional terminal look (no chat bubbles) */
+  #insights input[type="radio"] { display: none; }
+  #insights .ins-nav { display: flex; align-items: center;
+    justify-content: flex-start; gap: 2rem; margin-bottom: 1.5rem;
+    border-bottom: 1px solid #232636; }
+  #insights .ins-nav label { display: flex; align-items: center;
+    gap: 0.4rem; white-space: nowrap; cursor: pointer; padding: 0.45rem 0;
+    font-weight: 600; font-size: 0.8rem; color: #94A3B8;
+    border-bottom: 2px solid transparent; margin-bottom: -1px; }
+  #insights section { display: none; flex-direction: column; gap: 0.75rem; }
+  #ins-theses:checked ~ #panel-theses,
+  #ins-banks:checked ~ #panel-banks,
+  #ins-conflict:checked ~ #panel-conflict { display: flex; }
+  #ins-theses:checked ~ .ins-nav label[for="ins-theses"],
+  #ins-banks:checked ~ .ins-nav label[for="ins-banks"],
+  #ins-conflict:checked ~ .ins-nav label[for="ins-conflict"] {
+    color: #E2E8F0; border-bottom-color: #3B82F6; }
+  .ins-card { background: #1A1C24; border: 1px solid #232636;
+    border-left: 4px solid #64748B; border-radius: 8px;
+    padding: 0.75rem 1rem; }
+  .ins-card h3 { color: #E2E8F0; font-weight: 600; font-size: 0.8rem;
+    letter-spacing: 0.05em; text-transform: uppercase;
+    margin: 0 0 0.3rem; }
+  .ins-card p { color: #CBD5E1; font-size: 0.85rem; line-height: 1.5;
+    margin: 0; }
+</style>
 </head>
 <body class="min-h-screen bg-base-300 p-3 sm:p-6">
 <div class="max-w-2xl mx-auto space-y-4">
@@ -30,27 +57,49 @@
   <div id="signal" hx-get="partial/signal" hx-trigger="load"
        hx-swap="innerHTML"></div>
 
-  <!-- C. Debate & Insights (bot 7) — static: changes once per day -->
+  <!-- C. Debate & Insights (bot 7) — static: changes once per day.
+       Institutional terminal look: flat cards with a category border,
+       custom radio tabs (nav isolated from the content flow). -->
   {% set W = state.weather %}
-  <div class="card bg-base-100 shadow">
+  <div class="card shadow" style="background:#12131A; border:1px solid #1F2230;">
     <div class="card-body py-4">
-      <h2 class="card-title text-base">🧠 Debate &amp; Insights (Bot 7)</h2>
+      <h2 class="card-title text-base" style="color:#E2E8F0;">🧠 Debate &amp; Insights (Bot 7)</h2>
       {% if W %}
-      <div role="tablist" class="tabs tabs-lifted">
-        <input type="radio" name="insights" role="tab" class="tab whitespace-nowrap" aria-label="⚖️ Clash of Theses" checked>
-        <div role="tabpanel" class="tab-content bg-base-100 border-base-300 rounded-box p-4 space-y-3 text-sm">
-          <div class="chat chat-start"><div class="chat-bubble chat-bubble-info">🌍 <b>Geopolitics:</b> {{ W.geo_summary or "—" }}</div></div>
-          <div class="chat chat-end"><div class="chat-bubble chat-bubble-secondary">🏦 <b>Macro:</b> {{ W.macro_summary or "—" }}</div></div>
-          <div class="chat chat-start"><div class="chat-bubble chat-bubble-accent">📣 <b>Sentiment:</b> {{ W.sentiment_summary or "—" }}</div></div>
-        </div>
-        <input type="radio" name="insights" role="tab" class="tab" aria-label="💼 Bank Targets">
-        <div role="tabpanel" class="tab-content bg-base-100 border-base-300 rounded-box p-4 text-sm">
-          {{ W.banks_summary or "no published target" }}
-        </div>
-        <input type="radio" name="insights" role="tab" class="tab" aria-label="🎯 Conflict">
-        <div role="tabpanel" class="tab-content bg-base-100 border-base-300 rounded-box p-4 text-sm italic">
-          {{ W.conflict or "no notable conflict" }}
-        </div>
+      <div id="insights">
+        <input type="radio" id="ins-theses" name="insights" checked>
+        <input type="radio" id="ins-banks" name="insights">
+        <input type="radio" id="ins-conflict" name="insights">
+        <nav class="ins-nav" role="tablist">
+          <label for="ins-theses" role="tab">⚖️ Clash of Theses</label>
+          <label for="ins-banks" role="tab">💼 Bank Targets</label>
+          <label for="ins-conflict" role="tab">🎯 Conflict</label>
+        </nav>
+        <section id="panel-theses" role="tabpanel">
+          <div class="ins-card" style="border-left-color:#3B82F6;">
+            <h3>🌍 Geopolitics</h3>
+            <p>{{ W.geo_summary or "—" }}</p>
+          </div>
+          <div class="ins-card" style="border-left-color:#10B981;">
+            <h3>🏦 Macro</h3>
+            <p>{{ W.macro_summary or "—" }}</p>
+          </div>
+          <div class="ins-card" style="border-left-color:#F59E0B;">
+            <h3>📣 Sentiment</h3>
+            <p>{{ W.sentiment_summary or "—" }}</p>
+          </div>
+        </section>
+        <section id="panel-banks" role="tabpanel">
+          <div class="ins-card">
+            <h3>💼 Bank desks</h3>
+            <p>{{ W.banks_summary or "no published target" }}</p>
+          </div>
+        </section>
+        <section id="panel-conflict" role="tabpanel">
+          <div class="ins-card" style="border-left-color:#E11D48;">
+            <h3>🎯 Conflict of the day</h3>
+            <p style="font-style:italic;">{{ W.conflict or "no notable conflict" }}</p>
+          </div>
+        </section>
       </div>
       {% else %}
       <div class="space-y-2">
