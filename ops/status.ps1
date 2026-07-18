@@ -10,7 +10,9 @@ $Bots = @(
     "sentinel_alpha_compound.py",
     "sentinel_trend.py",
     "sentinel_trade_analytics.py",
-    "sentinel_telegram.py"
+    "sentinel_telegram.py",
+    "sentinel_macro_analyst.py",
+    "sentinel_arbitrage.py"
 )
 
 $allOk = $true

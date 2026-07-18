@@ -1,0 +1,85 @@
+{# Bot 8: elite quant KPIs + technical vs semantic arbitrage log #}
+{% set m = arb.metrics %}
+
+<!-- KPI cards -->
+<div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+  <div class="card bg-base-100 shadow-sm"><div class="card-body py-3 px-4">
+    <div class="text-xs opacity-60 uppercase">Win rate</div>
+    <div class="text-2xl font-black">{{ "%.2f%%"|format(m.win_rate) if m.win_rate is not none else "—" }}</div>
+  </div></div>
+  <div class="card bg-base-100 shadow-sm"><div class="card-body py-3 px-4">
+    <div class="text-xs opacity-60 uppercase">Profit factor</div>
+    {% if m.profit_factor is not none %}
+    <div class="text-2xl font-black {{ 'text-success' if m.profit_factor >= 1.5 else 'text-warning' if m.profit_factor >= 1.1 else 'text-error' }}">{{ "%.2f"|format(m.profit_factor) }}</div>
+    {% else %}<div class="text-2xl font-black opacity-40">—</div>{% endif %}
+  </div></div>
+  <div class="card bg-base-100 shadow-sm"><div class="card-body py-3 px-4">
+    <div class="text-xs opacity-60 uppercase">Sharpe ratio</div>
+    <div class="text-2xl font-black">{{ "%.2f"|format(m.sharpe) if m.sharpe is not none else "—" }}</div>
+  </div></div>
+  <div class="card bg-base-100 shadow-sm"><div class="card-body py-3 px-4">
+    <div class="text-xs opacity-60 uppercase">Max drawdown</div>
+    {% if m.max_drawdown_pct is not none %}
+    <div class="text-2xl font-black text-error">{{ "%.2f%%"|format(m.max_drawdown_pct) }}</div>
+    {% elif m.max_drawdown %}
+    <div class="text-2xl font-black text-error">-{{ "%.2f"|format(m.max_drawdown) }}</div>
+    {% else %}<div class="text-2xl font-black opacity-40">—</div>{% endif %}
+  </div></div>
+</div>
+
+<!-- Technical vs semantic confrontation -->
+<div class="card bg-base-100 shadow mt-2"><div class="card-body py-3">
+  <h2 class="card-title text-sm">⚔️ Technical vs Semantic <span class="badge badge-neutral badge-sm">{{ arb.total }}</span></h2>
+
+  <form class="flex flex-wrap items-end gap-2 text-xs"
+        hx-get="partial/arbitrage" hx-target="#arbitrage" hx-swap="innerHTML">
+    <label class="form-control">
+      <span class="label-text text-xs opacity-60">Asset</span>
+      <select name="asset" class="select select-bordered select-xs">
+        <option value="">all</option>
+        {% for a in arb.assets %}<option value="{{ a }}" {{ "selected" if a == arb.asset }}>{{ a }}</option>{% endfor %}
+      </select>
+    </label>
+    <label class="form-control">
+      <span class="label-text text-xs opacity-60">From</span>
+      <input type="date" name="start" value="{{ arb.start }}" class="input input-bordered input-xs">
+    </label>
+    <label class="form-control">
+      <span class="label-text text-xs opacity-60">To</span>
+      <input type="date" name="end" value="{{ arb.end }}" class="input input-bordered input-xs">
+    </label>
+    <button class="btn btn-xs btn-primary">Filter</button>
+  </form>
+
+  <div class="overflow-x-auto"><table class="table table-xs">
+    <thead><tr><th>Date (UTC)</th><th>Asset</th><th>Dir.</th><th>MT5 signal</th><th>Bot 7 view</th><th>Aligned</th><th>Arbitration</th><th>PnL (€)</th></tr></thead>
+    <tbody>
+      {% for r in arb.rows %}
+      <tr>
+        <td class="whitespace-nowrap">{{ r.date }}</td>
+        <td>{{ r.asset }}</td>
+        <td>{{ r.direction }}</td>
+        <td class="opacity-70">{{ r.mt5_action }}</td>
+        <td class="opacity-70 max-w-48 truncate" title="{{ r.bot7_view }}">{{ r.bot7_view }}</td>
+        <td>{% if r.is_aligned is none %}<span class="badge badge-ghost badge-xs">—</span>
+            {% elif r.is_aligned %}<span class="badge badge-success badge-xs">YES</span>
+            {% else %}<span class="badge badge-warning badge-xs">NO</span>{% endif %}</td>
+        <td class="max-w-64 truncate {{ 'italic opacity-60' if r.is_aligned == false }}" title="{{ r.winner }}">{{ r.winner }}</td>
+        <td class="font-mono whitespace-nowrap {{ 'text-success' if r.pnl > 0 else 'text-error' if r.pnl < 0 else 'opacity-60' }}">{{ "%+.2f"|format(r.pnl) }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="8" class="opacity-40">no arbitrage yet — bot 8 runs daily at 22:00 UTC</td></tr>
+      {% endfor %}
+    </tbody>
+  </table></div>
+
+  {% if arb.pages > 1 %}
+  <div class="join justify-center">
+    {% for p in range(1, arb.pages + 1) %}
+    <button class="join-item btn btn-xs {{ 'btn-active' if p == arb.page }}"
+            hx-get="partial/arbitrage?asset={{ arb.asset }}&start={{ arb.start }}&end={{ arb.end }}&page={{ p }}"
+            hx-target="#arbitrage" hx-swap="innerHTML">{{ p }}</button>
+    {% endfor %}
+  </div>
+  {% endif %}
+</div></div>
