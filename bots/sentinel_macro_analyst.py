@@ -346,6 +346,14 @@ async def run_council(llm: AsyncAnthropic, sources: dict,
         return dict(NEUTRAL_FALLBACK)
 
 
+# Native web search for the analyst ONLY: deepen the already-qualified
+# news. max_uses caps the spend (Cost Control); the GA _20260209 variant
+# embeds its own dynamic-filtering environment, so code_execution must
+# NOT be declared alongside it.
+WEB_SEARCH_TOOL = {"type": "web_search_20260209", "name": "web_search",
+                   "max_uses": 3}
+
+
 async def run_signal_pipeline(llm: AsyncAnthropic, sources: dict,
                               now: datetime) -> dict:
     """Layers 2+3 of the v2 pipeline (Cost Control by design).
@@ -379,12 +387,15 @@ async def run_signal_pipeline(llm: AsyncAnthropic, sources: dict,
                                                 only=("calendar",)))
             resp = await _create(
                 llm, models["agent_analyst"], system=msig.PROMPT_ANALYST,
+                tools=[WEB_SEARCH_TOOL],
                 output_config={"format": {"type": "json_schema",
                                           "schema": msig.SIGNAL_SCHEMA}},
                 messages=[{"role": "user", "content": dossier}])
+            # web_search interleaves result blocks and interim text before
+            # the schema-forced JSON: the LAST text block is the verdict.
             signal = msig.clamp_signal(
-                json.loads(next(b.text for b in resp.content
-                                if b.type == "text")))
+                json.loads([b.text for b in resp.content
+                            if b.type == "text"][-1]))
     except Exception as exc:
         log.error("Signal pipeline failed (%s): NO_SIGNAL fallback.", exc)
         signal = dict(msig.NO_SIGNAL)

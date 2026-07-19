@@ -108,6 +108,7 @@ def get_arbitrage() -> dict:
              "bot7_view": "CALM (quiet macro calendar)",
              "is_aligned": True, "pnl": 86.40, "winner": "ALIGNED."},
         ],
+        "sample_size": 21, "min_sample": 10,
         "total": 3, "assets": ["EURUSD.p", "SpotBrent", "XAUUSD.p"],
         "page": 1, "pages": 1, "asset": "", "start": "", "end": "",
     }

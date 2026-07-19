@@ -1,7 +1,13 @@
 {# Bot 8: elite quant KPIs + technical vs semantic arbitrage log #}
 {% set m = arb.metrics %}
 
-<!-- KPI cards -->
+<!-- KPI cards: numeric counters only once the sample is meaningful -->
+{% if arb.sample_size < arb.min_sample %}
+<div class="card bg-base-100 shadow-sm"><div class="card-body py-3 px-4">
+  <div class="text-xs opacity-60 uppercase">Quant KPIs</div>
+  <div class="text-lg font-semibold opacity-70">En cours d'acquisition (N = {{ arb.sample_size }}/{{ arb.min_sample }})</div>
+</div></div>
+{% else %}
 <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
   <div class="card bg-base-100 shadow-sm"><div class="card-body py-3 px-4">
     <div class="text-xs opacity-60 uppercase">Win rate</div>
@@ -26,6 +32,7 @@
     {% else %}<div class="text-2xl font-black opacity-40">—</div>{% endif %}
   </div></div>
 </div>
+{% endif %}
 
 <!-- Technical vs semantic confrontation -->
 <div class="card bg-base-100 shadow mt-2"><div class="card-body py-3">

@@ -222,6 +222,37 @@ class TestSignalPipeline(unittest.IsolatedAsyncioTestCase):
                          calls[1].kwargs["messages"][0]["content"])
         self.assertEqual(self._signal_file()["asset_affected"], "XAUUSD")
 
+    async def test_analyst_gets_web_search_but_not_triage(self):
+        # Native web_search (GA _20260209) on the analyst only, capped by
+        # max_uses; no code_execution declared alongside (the _20260209
+        # variant embeds its own environment); triage stays tool-free.
+        triage = {"scores": [{"index": 0, "score": 9}]}
+        llm = _llm(normal=[_llm_response(json.dumps(triage)),
+                           _llm_response(json.dumps(SIGNAL))])
+        await ma.run_signal_pipeline(llm, SOURCES, DAY)
+        calls = llm.messages.create.await_args_list
+        self.assertNotIn("tools", calls[0].kwargs)
+        tools = calls[1].kwargs["tools"]
+        self.assertEqual([t["type"] for t in tools], ["web_search_20260209"])
+        self.assertEqual(tools[0]["name"], "web_search")
+        self.assertLessEqual(tools[0]["max_uses"], 5)
+
+    async def test_analyst_json_read_from_last_text_block(self):
+        # With web_search enabled, search result blocks and interim text
+        # can precede the final JSON: the parser must take the LAST text
+        # block, not the first.
+        triage = {"scores": [{"index": 0, "score": 9}]}
+        analyst = _llm_response(json.dumps(SIGNAL))
+        analyst.content = [
+            mock.Mock(type="server_tool_use"),
+            mock.Mock(type="web_search_tool_result"),
+            mock.Mock(type="text", text="Searching for context..."),
+            mock.Mock(type="text", text=json.dumps(SIGNAL)),
+        ]
+        llm = _llm(normal=[_llm_response(json.dumps(triage)), analyst])
+        signal = await ma.run_signal_pipeline(llm, SOURCES, DAY)
+        self.assertEqual(signal["action_for_mt5"], "BLOCK_BUY_SIGNALS")
+
     async def test_low_scores_save_the_heavy_model(self):
         triage = {"scores": [{"index": 0, "score": 5}]}
         llm = _llm(normal=[_llm_response(json.dumps(triage))])

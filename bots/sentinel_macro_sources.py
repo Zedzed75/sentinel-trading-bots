@@ -49,7 +49,7 @@ SOCIAL_FIGURES = ("Donald Trump", "Elon Musk", "US State Department",
 # pre-filter: anything without one of these is dropped before any LLM.
 ASSET_KEYWORDS = ("tariff", "oil", "gold", "inflation", "fed", "china",
                   "iran", "saudi", "opec", "dollar", "rates",
-                  "ecb", "boe", "fomc", "nfp", "payrolls", "cpi", "ppi",
+                  "ecb", "bce", "boe", "fomc", "nfp", "payrolls", "cpi", "ppi",
                   "gdp", "rate cut", "rate hike")
 
 # --- C. Macro-economy ---------------------------------------------------------

@@ -240,12 +240,17 @@ def build_state(now: datetime | None = None) -> dict:
 
 
 # --- Arbitrage (bot 8): quant KPIs + technical vs semantic log ---------------
+MIN_ARBITRAGE_SAMPLE = 10   # below: KPIs hidden, acquisition banner shown
+
+
 def read_arbitrage_rows(asset: str = "", start: str = "", end: str = "",
-                        page: int = 1) -> tuple[list[dict], int, list[str]]:
+                        page: int = 1
+                        ) -> tuple[list[dict], int, list[str], int]:
     """arbitrage_logs rows (bot 8), filtered and paginated, read-only.
 
-    Returns (rows, total, distinct assets); ([], 0, []) if the DB is
-    missing or unreadable - the interface shows a grey skeleton.
+    Returns (rows, filtered total, distinct assets, unfiltered sample
+    size); ([], 0, [], 0) if the DB is missing or unreadable - the
+    interface shows a grey skeleton.
     """
     where, params = [], []
     if asset:
@@ -277,11 +282,13 @@ def read_arbitrage_rows(asset: str = "", start: str = "", end: str = "",
             assets = [r[0] for r in con.execute(
                 "SELECT DISTINCT asset FROM arbitrage_logs"
                 " WHERE asset != '-' ORDER BY asset")]
+            sample = con.execute(
+                "SELECT COUNT(*) FROM arbitrage_logs").fetchone()[0]
         finally:
             con.close()
-        return rows, total, assets
+        return rows, total, assets, sample
     except sqlite3.Error:
-        return [], 0, []
+        return [], 0, [], 0
 
 
 def arbitrage_state(asset: str = "", start: str = "", end: str = "",
@@ -290,9 +297,11 @@ def arbitrage_state(asset: str = "", start: str = "", end: str = "",
     if MOCK:
         import mock_dashboard_data
         return mock_dashboard_data.get_arbitrage()
-    rows, total, assets = read_arbitrage_rows(asset, start, end, page)
+    rows, total, assets, sample = read_arbitrage_rows(asset, start, end,
+                                                      page)
     pages = max((total + ARBITRAGE_PER_PAGE - 1) // ARBITRAGE_PER_PAGE, 1)
     return {"metrics": load_json(ARBITRAGE_SUMMARY),
+            "sample_size": sample, "min_sample": MIN_ARBITRAGE_SAMPLE,
             "rows": rows, "total": total, "assets": assets,
             "page": min(max(page, 1), pages), "pages": pages,
             "asset": asset, "start": start, "end": end}
