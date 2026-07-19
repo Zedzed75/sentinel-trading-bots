@@ -102,6 +102,59 @@ class TestArbitrationRules(unittest.TestCase):
         self.assertIsNone(ar.day_weather({}, NOW.date()))
 
 
+class TestBackfill(unittest.TestCase):
+    """Issue #32: journal corrections repair the dataset (no holes)."""
+
+    HIST = [{"date": "2026-07-17", "weather": "STORMY", "focus": "Hormuz"}]
+    D17 = datetime(2026, 7, 17, 16, 37, tzinfo=UTC)
+
+    def setUp(self):
+        self.con, self.db = temp_db()
+        self.addCleanup(self.con.close)
+
+    def test_missing_past_day_backfilled_with_archived_weather(self):
+        trades = [_trade(-147.34, close=self.D17),
+                  _trade(59.7, strategy="statarb", close=self.D17)]
+        self.assertEqual(
+            ar.backfill_missing_days(self.con, NOW, trades, self.HIST), 1)
+        rows = self.con.execute(
+            "SELECT is_aligned, winner_arbitrage, bot7_view"
+            " FROM arbitrage_logs ORDER BY id").fetchall()
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0][:2], (1, ar.WINNER_ALIGNED))  # breakout
+        self.assertEqual(rows[1][:2], (0, ar.WINNER_MT5))      # statarb +
+        self.assertIn("STORMY", rows[0][2])
+
+    def test_days_with_real_rows_are_never_clobbered(self):
+        ar.insert_rows(self.con, [ar.arbitrate(
+            _trade(1.0, close=self.D17), None)])
+        self.assertEqual(ar.backfill_missing_days(
+            self.con, NOW, [_trade(-5.0, close=self.D17)], self.HIST), 0)
+        self.assertEqual(self.con.execute(
+            "SELECT pnl FROM arbitrage_logs").fetchall(), [(1.0,)])
+
+    def test_stale_no_signal_row_is_replaced(self):
+        ar.insert_rows(self.con,
+                       [ar.no_signal_row(self.D17.date(), None)])
+        ar.backfill_missing_days(self.con, NOW,
+                                 [_trade(-147.34, close=self.D17)],
+                                 self.HIST)
+        rows = self.con.execute(
+            "SELECT asset FROM arbitrage_logs").fetchall()
+        self.assertEqual(rows, [("XAUUSD.p",)])   # '-' row gone
+
+    def test_today_left_to_the_daily_run(self):
+        self.assertEqual(ar.backfill_missing_days(
+            self.con, NOW, [_trade(1.0, close=NOW)], self.HIST), 0)
+
+    def test_missing_archive_fills_with_null_alignment(self):
+        ar.backfill_missing_days(self.con, NOW,
+                                 [_trade(1.0, close=self.D17)], [])
+        row = self.con.execute("SELECT is_aligned, winner_arbitrage"
+                               " FROM arbitrage_logs").fetchone()
+        self.assertEqual(row, (None, ar.WINNER_NO_VIEW))
+
+
 class TestSchedule(unittest.TestCase):
     def test_runs_once_per_day_from_22h(self):
         self.assertFalse(ar.should_run({}, NOW.replace(hour=21, minute=59)))
@@ -124,6 +177,8 @@ class TestDailyBatch(unittest.TestCase):
             mock.patch.object(ar, "STATE_FILE", self.state_file),
             mock.patch.object(ar, "SUMMARY_FILE", self.summary),
             mock.patch.object(ar, "EXPORT_CSV", self.export),
+            mock.patch.object(ar, "HISTORY_FILE",
+                              os.path.join(self.tmp, "no_history.json")),
         ]
         for p in self.patches:
             p.start()
@@ -141,6 +196,13 @@ class TestDailyBatch(unittest.TestCase):
         return self.con.execute(
             "SELECT asset, is_aligned, pnl, winner_arbitrage"
             " FROM arbitrage_logs ORDER BY id").fetchall()
+
+    def test_run_arbitration_backfills_past_days(self):
+        past = _trade(-147.34, close=NOW.replace(day=17, hour=16))
+        self._run([past, _trade(10.0)])
+        days = {r[0][:10] for r in self.con.execute(
+            "SELECT date_utc FROM arbitrage_logs")}
+        self.assertEqual(days, {"2026-07-17", "2026-07-18"})
 
     def test_one_row_per_trade_and_state_saved(self):
         state = {}
@@ -168,12 +230,19 @@ class TestDailyBatch(unittest.TestCase):
         self.assertEqual(rows[0][0], "-")
         self.assertEqual(rows[0][2], 0.0)
 
-    def test_yesterdays_trades_excluded(self):
+    def test_yesterdays_trades_excluded_from_daily_batch(self):
+        # A past trade never lands in TODAY's batch: it is backfilled
+        # under its own day (issue #32), today's batch stays clean.
         old = _trade(99.0, close=NOW.replace(day=17))
         self._run([old, _trade(5.0)])
-        rows = self._rows()
-        self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0][2], 5.0)
+        today = self.con.execute(
+            "SELECT pnl FROM arbitrage_logs"
+            " WHERE date_utc LIKE '2026-07-18%'").fetchall()
+        self.assertEqual(today, [(5.0,)])
+        past = self.con.execute(
+            "SELECT pnl FROM arbitrage_logs"
+            " WHERE date_utc LIKE '2026-07-17%'").fetchall()
+        self.assertEqual(past, [(99.0,)])
 
     def test_summary_kpis_written(self):
         self._run([_trade(100.0), _trade(-50.0, strategy="statarb")])

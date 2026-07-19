@@ -45,6 +45,7 @@ LOG_DIR = os.path.join(os.path.dirname(_DIR), "logs")
 DB_FILE = os.path.join(_DIR, "arbitrage.db")
 STATE_FILE = os.path.join(_DIR, "arbitrage_state.json")
 WEATHER_FILE = os.path.join(_DIR, "macro_weather.json")
+HISTORY_FILE = os.path.join(_DIR, "macro_history.json")   # bot 7 archive
 SENTINEL_STATE = os.path.join(_DIR, "sentinel_state.json")
 SUMMARY_FILE = os.path.join(_DIR, "arbitrage_summary.json")
 TRADES_CSV = os.path.join(LOG_DIR, "trades.csv")
@@ -195,6 +196,24 @@ def no_signal_row(day: date, weather: dict | None) -> dict:
             else "No trade to arbitrate."}
 
 
+def load_history(path: str | None = None) -> list[dict]:
+    """Bot 7's daily archive (list of dated reports); [] if KO."""
+    try:
+        with open(path or HISTORY_FILE, encoding="utf-8") as fh:
+            data = json.load(fh)
+        return data if isinstance(data, list) else []
+    except (OSError, ValueError):
+        return []
+
+
+def weather_from_history(history: list[dict], day: date) -> dict | None:
+    """The archived bot 7 report of that exact day, if any."""
+    for entry in history:
+        if isinstance(entry, dict) and day_weather(entry, day):
+            return entry
+    return None
+
+
 def should_run(state: dict, now: datetime) -> bool:
     """One arbitration per day, from 22:00 UTC."""
     return (now.hour >= RUN_HOUR
@@ -258,12 +277,51 @@ def export_csv(con: sqlite3.Connection, path: str | None = None):
     os.replace(tmp, path)
 
 
+def days_with_real_rows(con: sqlite3.Connection) -> set[str]:
+    """ISO days already holding at least one real trade row."""
+    cur = con.execute("SELECT DISTINCT substr(date_utc, 1, 10)"
+                      " FROM arbitrage_logs WHERE asset != '-'")
+    return {r[0] for r in cur.fetchall()}
+
+
+def backfill_missing_days(con: sqlite3.Connection, now: datetime,
+                          trades: list[dict] | None = None,
+                          history: list[dict] | None = None) -> int:
+    """(Re)arbitrate past journal days without any real arbitrage row.
+
+    Journal corrections (e.g. the close_time shift of issue #32) repair
+    the dataset instead of leaving holes: each such day is rebuilt with
+    its ARCHIVED weather (macro_history.json). Days already holding
+    real rows are never touched; a stale no-signal row is replaced.
+    Returns the number of days backfilled.
+    """
+    by_day: dict[date, list[dict]] = {}
+    for t in (read_trades() if trades is None else trades):
+        by_day.setdefault(t["close_time"].date(), []).append(t)
+    done = days_with_real_rows(con)
+    history = load_history() if history is None else history
+    filled = 0
+    for day in sorted(by_day):
+        if day >= now.date() or day.isoformat() in done:
+            continue                  # today belongs to the daily run
+        weather = weather_from_history(history, day)
+        delete_day(con, day)          # drops a stale no-signal row
+        insert_rows(con, [arbitrate(t, weather) for t in by_day[day]])
+        filled += 1
+        log.info("Backfill %s: %d row(s), archived weather %s", day,
+                 len(by_day[day]), "found" if weather else "unavailable")
+    return filled
+
+
 # --- Daily cycle ---------------------------------------------------------------
 def run_arbitration(con: sqlite3.Connection, state: dict, now: datetime):
-    """22:00 UTC: weather snapshot vs the day's closed trades."""
+    """22:00 UTC: weather snapshot vs the day's closed trades (after a
+    backfill pass repairing any past-day hole, issue #32)."""
     day = now.date()
+    trades = read_trades()
+    backfill_missing_days(con, now, trades)
     weather = day_weather(load_json(WEATHER_FILE), day)
-    todays = [t for t in read_trades() if t["close_time"].date() == day]
+    todays = [t for t in trades if t["close_time"].date() == day]
     rows = ([arbitrate(t, weather) for t in todays]
             or [no_signal_row(day, weather)])
     delete_day(con, day)
