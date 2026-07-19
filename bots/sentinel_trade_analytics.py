@@ -57,6 +57,13 @@ log = logging.getLogger("analytics")
 # ----------------------------------------------------------------------------
 _SERVER_OFFSET = {"hours": 0.0, "at": None}
 _OFFSET_SYMBOLS = ("XAUUSD", "XAUUSD.p", "GOLD", "EURUSD", "EURUSD.p")
+# Plausible band for (server clock - UTC). Pepperstone runs UTC+2/+3;
+# outside market hours the last tick is STALE, so the measured delta
+# drifts negative by the tick's age (a Friday-evening tick read on
+# Saturday looks like -8 h). The old +/-13 h guard accepted that and
+# shifted trades across midnight (issue #32): outside this band the
+# last known value is kept instead.
+OFFSET_MIN_H, OFFSET_MAX_H = -1.0, 5.0
 
 
 def server_offset_hours(now: datetime | None = None) -> float:
@@ -77,7 +84,7 @@ def server_offset_hours(now: datetime | None = None) -> float:
         ts = getattr(mt5.symbol_info_tick(name), "time", None)
         if isinstance(ts, (int, float)) and ts > 0:
             delta_h = (ts - now.timestamp()) / 3600
-            if abs(delta_h) <= 13:        # fresh tick, plausible offset
+            if OFFSET_MIN_H <= delta_h <= OFFSET_MAX_H:   # fresh + plausible
                 cache["hours"] = round(delta_h * 2) / 2
                 cache["at"] = now
                 break

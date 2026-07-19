@@ -119,6 +119,29 @@ class TestBuildTrades(unittest.TestCase):
         self.assertEqual(sa.build_trades(deals, offset_h=3.0)[0]["open_hour"],
                          "09h")
 
+    def test_stale_weekend_tick_never_corrupts_offset(self):
+        # Issue #32: on week-ends the last tick is hours old, so the
+        # measured delta drifts negative by the tick's age. The old
+        # +/-13 h guard accepted -8 h and shifted trades across
+        # midnight. Outside the plausible band, keep the last value.
+        sa._SERVER_OFFSET.update({"hours": 0.0, "at": None})
+        fake_mt5.symbol_select.return_value = True
+        fake_mt5.symbol_info_tick.return_value = SimpleNamespace(
+            time=NOW.timestamp() + 3 * 3600)      # fresh tick, UTC+3
+        self.assertEqual(sa.server_offset_hours(NOW), 3.0)
+        later = NOW + timedelta(hours=2)          # 1 h cache expired
+        fake_mt5.symbol_info_tick.return_value = SimpleNamespace(
+            time=(later - timedelta(hours=11)).timestamp() + 3 * 3600)
+        self.assertEqual(sa.server_offset_hours(later), 3.0)  # not -8.0
+
+    def test_offset_band_rejects_negative_brokers_staleness_only(self):
+        # a plausible fresh measurement inside the band is accepted
+        sa._SERVER_OFFSET.update({"hours": 0.0, "at": None})
+        fake_mt5.symbol_select.return_value = True
+        fake_mt5.symbol_info_tick.return_value = SimpleNamespace(
+            time=NOW.timestamp() + 2 * 3600)      # winter: UTC+2
+        self.assertEqual(sa.server_offset_hours(NOW), 2.0)
+
     def test_trades_sorted_by_close_time(self):
         deals = [
             _deal(20, entry=0, time=T0), _deal(20, entry=1, time=T0 + 9999),
