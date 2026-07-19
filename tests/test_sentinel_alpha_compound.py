@@ -88,6 +88,12 @@ class TestCompounding(unittest.TestCase):
     """Proof of dynamic lot sizing on equity (compounding effect)."""
 
     def setUp(self):
+        # isolation: never read the live bots/risk_scale.json written by
+        # the orchestrator (issue #30) - absent file => scale 1.0
+        p = mock.patch.object(sa, "RISK_SCALE_FILE",
+                              os.path.join(tempfile.mkdtemp(), "absent.json"))
+        p.start()
+        self.addCleanup(p.stop)
         self.state, self.path = temp_state()
         self.sizer = sa.KellySizer(self.state)
         self.analysis = {"beta": 1.0, "sigma": 0.5, "z": -2.4,

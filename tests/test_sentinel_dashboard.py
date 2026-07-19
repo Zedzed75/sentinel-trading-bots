@@ -307,7 +307,37 @@ class TestArbitrage(unittest.TestCase):
     def _get(self, url):
         return self.client.get(url, auth=self.auth)
 
+    def _pad_to(self, n):
+        """Filler rows so the table reaches the minimal KPI sample."""
+        con = sqlite3.connect(self.db)
+        con.executemany(
+            "INSERT INTO arbitrage_logs (date_utc, asset, direction,"
+            " mt5_action, bot7_view, is_aligned, pnl, winner_arbitrage)"
+            " VALUES (?,?,?,?,?,?,?,?)",
+            [(f"2026-07-{1 + i:02d}T10:00:00+00:00", "XAUUSD.p", "LONG",
+              "Long execution (breakout)", "CALM (quiet)", 1, 10.0,
+              "ALIGNED.") for i in range(n - 3)])
+        con.commit()
+        con.close()
+
+    def test_small_sample_hides_global_kpis(self):
+        # N < 10: numeric counters are statistically meaningless - show
+        # the neutral acquisition banner instead (PO spec, chantier 4.3).
+        html = self._get("/partial/arbitrage").text
+        self.assertIn("En cours d'acquisition (N = 3/10)", html)
+        self.assertNotIn("61.90%", html)
+        self.assertNotIn("1.68", html)
+
+    def test_sample_gate_uses_unfiltered_count(self):
+        # The gate reflects the WHOLE table, not the filtered subset:
+        # filtering down to 1 row must not hide KPIs once N >= 10.
+        self._pad_to(10)
+        html = self._get("/partial/arbitrage?asset=EURUSD.p").text
+        self.assertIn("61.90%", html)
+        self.assertNotIn("En cours d'acquisition", html)
+
     def test_kpi_cards_and_thresholds(self):
+        self._pad_to(10)
         html = self._get("/partial/arbitrage").text
         self.assertIn("61.90%", html)                 # win rate
         self.assertIn('text-success">1.68', html)     # PF >= 1.5 -> green
@@ -324,6 +354,7 @@ class TestArbitrage(unittest.TestCase):
         self.assertIn('text-error">0.80', self._get("/partial/arbitrage").text)
 
     def test_table_ux_rules(self):
+        self._pad_to(10)
         html = self._get("/partial/arbitrage").text
         self.assertIn('badge-success badge-xs">YES', html)
         self.assertIn('badge-warning badge-xs">NO', html)

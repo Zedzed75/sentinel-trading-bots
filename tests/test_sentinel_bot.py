@@ -158,6 +158,12 @@ class TestDayGuard(unittest.TestCase):
 # --- MT5 orders (mocked) ---------------------------------------------------------
 class TestOrders(unittest.TestCase):
     def setUp(self):
+        # isolation: never read the live bots/risk_scale.json written by
+        # the orchestrator (issue #30) - absent file => scale 1.0
+        p = mock.patch.object(sb, "RISK_SCALE_FILE",
+                              os.path.join(tempfile.mkdtemp(), "absent.json"))
+        p.start()
+        self.addCleanup(p.stop)
         fake_mt5.reset_mock()
         fake_mt5.order_send.return_value = OK_RESULT
         fake_mt5.positions_get.return_value = []
