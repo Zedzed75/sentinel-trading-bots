@@ -4,6 +4,8 @@
 # - Captures each bot's stdout/stderr into logs/<bot>.log (10 MB rotation).
 # - Writes logs/status.html on each cycle (auto-refreshing page, open it
 #   in a browser to monitor the fleet).
+# - Checks the NTP service (W32Time) and requests a restart through the
+#   elevated on-demand task "SentinelTimeSync" if it stops.
 # - Launched by the "SentinelWatchdog" scheduled task at session logon.
 
 $Root = Split-Path -Parent $PSScriptRoot
@@ -26,6 +28,30 @@ $Bots = @(
 function Get-BotDir($bot) {
     if ($bot -eq "sentinel_dashboard.py") { return $Root }
     return $BotsDir
+}
+
+# NTP guard: the clock must stay disciplined (issue #32 context). This
+# watchdog runs Limited, so W32Time is restarted through the elevated
+# on-demand scheduled task SentinelTimeSync; Telegram alert fires on
+# the down transition only (no spam every 30 s cycle).
+$TimeSyncTask = "SentinelTimeSync"
+$script:NtpWasDown = $false
+
+function Check-TimeService {
+    $svc = Get-Service W32Time -ErrorAction SilentlyContinue
+    $down = (-not $svc) -or ($svc.Status -ne "Running")
+    if ($down) {
+        if (-not $script:NtpWasDown) {
+            Write-Log "W32Time stopped -> Start-ScheduledTask $TimeSyncTask"
+            Send-Telegram ("ALERT: NTP (W32Time) stopped - restart " +
+                "requested via the $TimeSyncTask task")
+        }
+        Start-ScheduledTask -TaskName $TimeSyncTask `
+            -ErrorAction SilentlyContinue
+    } elseif ($script:NtpWasDown) {
+        Write-Log "W32Time running again"
+    }
+    $script:NtpWasDown = $down
 }
 # Max heartbeat age (logs/<bot>.hb, written after each successful cycle).
 # Beyond that: process alive but frozen -> kill + restart. Bot 5 has a
@@ -161,6 +187,7 @@ while ($true) {
             Start-Sleep -Seconds 3
         }
     }
+    Check-TimeService
     Get-ChildItem $LogDir -Filter *.log |
         Where-Object Length -gt 10MB | ForEach-Object {
             Move-Item $_.FullName "$($_.FullName).1" -Force

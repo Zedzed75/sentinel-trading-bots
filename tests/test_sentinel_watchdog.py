@@ -51,6 +51,16 @@ class TestWatchdogFleet(unittest.TestCase):
         self.assertIn("-WorkingDirectory (Get-BotDir $bot)", self.src)
         self.assertNotIn("-WorkingDirectory $BotsDir", self.src)
 
+    def test_ntp_guard_present_and_delegated_to_elevated_task(self):
+        # The watchdog runs Limited: it must never call Start-Service
+        # W32Time directly, only trigger the elevated on-demand task
+        # SentinelTimeSync; Telegram alert on the down transition only.
+        self.assertIn("W32Time", self.src)
+        self.assertIn("SentinelTimeSync", self.src)
+        self.assertNotIn("Start-Service W32Time", self.src)
+        self.assertIn("NtpWasDown", self.src)
+        self.assertIn("Check-TimeService", self.src)
+
     def test_dashboard_has_no_heartbeat_threshold(self):
         # Request-driven process: no .hb file, so no freeze threshold
         # (a stale entry would make the watchdog kill a healthy server).
