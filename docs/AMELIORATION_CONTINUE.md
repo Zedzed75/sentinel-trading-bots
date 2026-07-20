@@ -118,6 +118,16 @@ sur la seule foi du backtest (bruit).
 *Appliquee le 2026-07-15* (drapeau `breakout` dans `CONFIG_PORTFOLIO` ;
 la reversion continue sur les trois actifs).
 
+**Suivi XAUUSD breakout (2026-07-20)** : journal reel depuis le
+2026-07-16 - 5 trades, -99.10 net, PF < 1 - coherent avec l'edge "mince
+et en erosion" identifie ci-dessus. Echantillon toujours sous le seuil
+de 30 trades (section 3), mais le declencheur pre-defini le 2026-07-15
+("si le journal reel confirme PF < 1 sur 30j, appliquer la reduction de
+moitie") est atteint en anticipe. Risque divise par deux sur XAUUSD
+breakout uniquement (`breakout_risk_mult` dans `CONFIG_PORTFOLIO`,
+reversion et les autres strategies non affectees). Reevaluation a 30
+trades reels sur ce couple.
+
 ### Stat-arb Brent/WTI (cointegration, |z|>=2, ADF)
 
 Moteur bi-serie ajoute le 2026-07-15 (`backtest_sentinel.py statarb`,

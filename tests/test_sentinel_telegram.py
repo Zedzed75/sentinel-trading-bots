@@ -145,7 +145,7 @@ class TestEntryWindows(unittest.TestCase):
                       self._at(3))
 
     def test_breakout_note_mentions_suspensions(self):
-        self.assertIn("XAUUSD only, EURUSD/GBPUSD suspended",
+        self.assertIn("XAUUSD only (risk /2), EURUSD/GBPUSD suspended",
                       self._at(10))
 
     def test_status_text_includes_windows_section(self):
@@ -169,7 +169,8 @@ class TestSuspensions(unittest.TestCase):
         self.assertIn(("breakout", "EURUSD", "suspended"), couples)
         self.assertIn(("breakout", "GBPUSD", "suspended"), couples)
         self.assertIn(("trend", "XTIUSD", "risk /2"), couples)
-        self.assertEqual(len(tg.SUSPENSIONS), 5)
+        self.assertIn(("breakout", "XAUUSD", "risk /2"), couples)
+        self.assertEqual(len(tg.SUSPENSIONS), 6)
 
     def test_counts_trades_since_decision_with_aliases(self):
         rows = [

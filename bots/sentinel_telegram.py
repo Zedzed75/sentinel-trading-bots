@@ -59,6 +59,8 @@ SUSPENSIONS = (
      "since": "2026-07-15", "aliases": ("GBPUSD",)},
     {"strategy": "trend", "symbol": "XTIUSD", "action": "risk /2",
      "since": "2026-07-15", "aliases": ("XTIUSD", "SpotCrude", "USOIL")},
+    {"strategy": "breakout", "symbol": "XAUUSD", "action": "risk /2",
+     "since": "2026-07-20", "aliases": ("XAUUSD", "GOLD")},
 )
 REVIEW_AFTER_DAYS = 91        # quarterly review
 REVIEW_MIN_TRADES = 30        # real-journal threshold (AMELIORATION section 4)
@@ -69,7 +71,7 @@ REVIEW_MIN_TRADES = 30        # real-journal threshold (AMELIORATION section 4)
 # openings). Exits and circuit breakers are never blocked.
 ENTRY_WINDOWS = (
     {"strategy": "breakout (bot 1)", "start": 8, "end": 16,
-     "note": "XAUUSD only, EURUSD/GBPUSD suspended"},
+     "note": "XAUUSD only (risk /2), EURUSD/GBPUSD suspended"},
     {"strategy": "reversion (bot 1)", "start": 13, "end": 18},
     {"strategy": "statarb (bot 2)", "start": 7, "end": 20},
     {"strategy": "trend (bot 3)", "start": 23, "end": 21},

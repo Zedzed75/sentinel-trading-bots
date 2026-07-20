@@ -40,10 +40,15 @@ from sentinel_signals import (
 # halves of the backtest, ~650 trades each (structural, not a
 # parameter - docs/AMELIORATION_CONTINUE.md, section 5). Quarterly
 # re-evaluation planned.
+# breakout_risk_mult: factor applied to the per-trade risk of strategy A
+# only (reversion unaffected). XAUUSD halved on 2026-07-20: the research
+# doc already flagged the edge as "thin, eroding" (PF 1.06, all-time),
+# and the real journal confirmed it early - 5 trades since 2026-07-16,
+# net -99.10, PF well under 1 (docs/AMELIORATION_CONTINUE.md, section 5).
 CONFIG_PORTFOLIO = {
     "XAUUSD": {"magic_breakout": 1001, "magic_reversion": 1002,
                "fallback": ["XAUUSD.p", "GOLD"], "vix_filter": True,
-               "breakout": True},
+               "breakout": True, "breakout_risk_mult": 0.5},
     "EURUSD": {"magic_breakout": 2001, "magic_reversion": 2002,
                "fallback": ["EURUSD.p"], "vix_filter": False,
                "breakout": False},
@@ -284,7 +289,9 @@ def resolve_symbols() -> dict:
                             "magic_breakout": cfg["magic_breakout"],
                             "magic_reversion": cfg["magic_reversion"],
                             "vix_filter": cfg.get("vix_filter", True),
-                            "breakout": cfg.get("breakout", True)}
+                            "breakout": cfg.get("breakout", True),
+                            "breakout_risk_mult":
+                                cfg.get("breakout_risk_mult", 1.0)}
             log.info("Asset %s -> broker symbol %s%s", name, found,
                      "" if active[name]["breakout"]
                      else " (breakout suspended)")
@@ -343,7 +350,8 @@ def send_order(request: dict):
     return result
 
 
-def open_trade(symbol: str, direction: str, magic: int, tag: str) -> bool:
+def open_trade(symbol: str, direction: str, magic: int, tag: str,
+               risk_mult: float = 1.0) -> bool:
     """Open a market trade with mandatory SL/TP and dynamic lot size."""
     if macro_gate_blocks(symbol, direction):
         return False
@@ -361,7 +369,8 @@ def open_trade(symbol: str, direction: str, magic: int, tag: str) -> bool:
         return False
     lot = compute_lot(acc.balance, sl_dist, sym.trade_tick_size,
                       sym.trade_tick_value, sym.volume_min,
-                      sym.volume_max, sym.volume_step, read_risk_scale())
+                      sym.volume_max, sym.volume_step,
+                      read_risk_scale() * risk_mult)
     if lot <= 0:
         log.warning("Computed lot is zero (balance %.2f, SL %.2f), "
                     "trade skipped.", acc.balance, sl_dist)
@@ -481,7 +490,8 @@ def scan_symbol(name: str, cfg: dict, macro: MacroFilter,
                 if sig and not has_open_position(symbol, mb):
                     log.info("[%s] BREAKOUT signal %s (Asia H=%s L=%s)",
                              name, sig, fp(symbol, hi), fp(symbol, lo))
-                    open_trade(symbol, sig, mb, "sentinel_breakout")
+                    open_trade(symbol, sig, mb, "sentinel_breakout",
+                              cfg.get("breakout_risk_mult", 1.0))
 
     # --- Strategy B: M5 mean reversion (on a new closed candle) ---
     if in_trading_hours(now, REVERSION_HOUR_START, REVERSION_HOUR_END):
