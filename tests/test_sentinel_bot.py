@@ -197,6 +197,12 @@ class TestOrders(unittest.TestCase):
         self.assertEqual(req["sl"], 2002.8)          # 1999.8 + 3.0
         self.assertEqual(req["tp"], 1993.8)          # 1999.8 - 6.0
 
+    def test_open_trade_risk_mult_halves_lot(self):
+        self.assertTrue(sb.open_trade(XAU, "BUY", XAU_MB, "test",
+                                      risk_mult=0.5))
+        req = fake_mt5.order_send.call_args[0][0]
+        self.assertEqual(req["volume"], 25.0)         # 50.0 (risk_mult=1) / 2
+
     def test_no_trade_when_lot_is_zero(self):
         fake_mt5.account_info.return_value = SimpleNamespace(
             balance=1.0, equity=1.0, login=1, currency="USD")
@@ -292,6 +298,33 @@ class TestRunCycle(unittest.TestCase):
         self.assertTrue(sb.CONFIG_PORTFOLIO["XAUUSD"]["breakout"])
         self.assertFalse(sb.CONFIG_PORTFOLIO["EURUSD"]["breakout"])
         self.assertFalse(sb.CONFIG_PORTFOLIO["GBPUSD"]["breakout"])
+
+    def test_production_config_halves_risk_on_xau_breakout(self):
+        # decision of 2026-07-20: real journal confirmed the "thin,
+        # eroding edge" already flagged in AMELIORATION_CONTINUE.md
+        # section 5 (-99.10 net over 5 trades since 2026-07-16)
+        self.assertEqual(
+            sb.CONFIG_PORTFOLIO["XAUUSD"]["breakout_risk_mult"], 0.5)
+
+    def test_breakout_uses_reduced_risk_mult_reversion_unaffected(self):
+        fake_mt5.account_info.return_value = SimpleNamespace(
+            balance=10000.0, equity=10000.0)
+        fake_mt5.copy_rates_from_pos.return_value = [
+            {"time": 1752400000 + i * 300, "open": 2000.0, "high": 2001.0,
+             "low": 1999.0, "close": 2000.0} for i in range(120)]
+        active = {"XAUUSD": {"symbol": XAU, "magic_breakout": XAU_MB,
+                             "magic_reversion": XAU_MR, "vix_filter": True,
+                             "breakout": True, "breakout_risk_mult": 0.5}}
+        with mock.patch.object(sb, "open_trade") as ot, \
+             mock.patch.object(sb, "breakout_signal", return_value="BUY"), \
+             mock.patch.object(sb, "reversion_signal", return_value="BUY"), \
+             mock.patch.object(ss, "FORCE_TRADING_HOURS", False):
+            sb.run_cycle(active, self.guard, self.macro, {},
+                         now=datetime(2026, 7, 14, 14, tzinfo=UTC))
+        calls = {c[0][3]: c[0] for c in ot.call_args_list}
+        self.assertEqual(calls["sentinel_breakout"][4], 0.5)
+        # reversion call has no risk_mult arg -> open_trade's default (1.0)
+        self.assertEqual(len(calls["sentinel_reversion"]), 4)
 
     def test_breakout_disabled_symbol_skips_m30_scan(self):
         active = {"EURUSD": {"symbol": "EURUSD.p", "magic_breakout": 2001,
@@ -389,6 +422,8 @@ class TestPortfolio(unittest.TestCase):
         self.assertTrue(active["XAUUSD"]["vix_filter"])
         self.assertFalse(active["EURUSD"]["vix_filter"])
         self.assertIn("GBPUSD", cm.output[0])
+        self.assertEqual(active["XAUUSD"]["breakout_risk_mult"], 0.5)
+        self.assertEqual(active["EURUSD"]["breakout_risk_mult"], 1.0)
 
     def test_management_isolated_by_symbol_and_magic(self):
         # a EURUSD position at 1R and a XAU position with a foreign magic
