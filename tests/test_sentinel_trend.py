@@ -179,7 +179,9 @@ class TestExecution(unittest.TestCase):
         full = fake_mt5.order_send.call_args[0][0]["volume"]
         st.open_trend_trade("XAUUSD.p", "BUY", 5001, df, risk_mult=0.5)
         half = fake_mt5.order_send.call_args[0][0]["volume"]
-        self.assertAlmostEqual(half, full / 2, places=2)
+        # compute_lot floors to volume_step (0.01); flooring is not linear,
+        # so half can be off from full/2 by up to one step (see issue #35).
+        self.assertAlmostEqual(half, full / 2, delta=0.01)
 
     def test_rollover_blackout_defers_entry(self):
         closes = [100.0] * (st.ENTRY_CHANNEL + 1) + [103.0, 103.0]
