@@ -290,6 +290,19 @@ class TestMockMode(unittest.TestCase):
         # legacy radio-hack tabs fully retired
         self.assertNotIn('type="radio"', page)
 
+    def test_global_wrapper_widens_on_desktop(self):
+        # 2026-07-23: fix - the page shell stayed mobile-width (max-w-2xl)
+        # on desktop, squeezing every section into a narrow center column
+        client = TestClient(dash.app)
+        with mock.patch.object(dash, "MOCK", True), \
+             mock.patch.object(dash, "_credentials",
+                               return_value=("sentinel", "bon")):
+            page = client.get("/", auth=("sentinel", "bon")).text
+        self.assertIn("max-w-2xl", page)               # mobile default kept
+        self.assertIn("lg:max-w-[1400px]", page)        # desktop breakout
+        self.assertIn("lg:w-[92%]", page)
+        self.assertIn("lg:grid-cols-4", page)           # fleet panel spreads
+
 
 class TestArbitrage(unittest.TestCase):
     """Bot 8 section: KPI cards, filtered/paginated datatable, UX rules."""
@@ -393,6 +406,9 @@ class TestArbitrage(unittest.TestCase):
         self.assertIn("italic opacity-60", html)      # divergent row greyed
         self.assertIn("-7.40%", html)                 # max DD card
         self.assertIn("2.15", html)                   # sharpe card
+        # 2026-07-23: table fills its container instead of being squeezed
+        self.assertIn('overflow-x-auto w-full', html)
+        self.assertIn('table table-xs w-full', html)
 
     def test_asset_filter_and_api(self):
         r = self._get("/api/arbitrage?asset=XAUUSD.p").json()
