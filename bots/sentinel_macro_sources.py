@@ -50,7 +50,9 @@ SOCIAL_FIGURES = ("Donald Trump", "Elon Musk", "US State Department",
 ASSET_KEYWORDS = ("tariff", "oil", "gold", "inflation", "fed", "china",
                   "iran", "saudi", "opec", "dollar", "rates",
                   "ecb", "bce", "boe", "fomc", "nfp", "payrolls", "cpi", "ppi",
-                  "gdp", "rate cut", "rate hike")
+                  "gdp", "rate cut", "rate hike",
+                  "pboc", "beijing", "yuan", "cnh", "stimulus",
+                  "state council")
 
 # --- C. Macro-economy ---------------------------------------------------------
 CALENDAR_URL = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"

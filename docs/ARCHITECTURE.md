@@ -83,8 +83,9 @@ Conventions transverses :
 
 ### 3.1 `sentinel_bot.py` - intraday multi-actifs
 
-- `CONFIG_PORTFOLIO` : XAUUSD, EURUSD, GBPUSD avec magics et flag
-  `vix_filter` par actif.
+- `CONFIG_PORTFOLIO` : XAUUSD, EURUSD, GBPUSD, USDCNH avec magics et flag
+  `vix_filter` par actif ; `sl_mult` et `fixing_blackout` (01h00-01h30 UTC,
+  fixing PBoC 01h15 UTC) sur USDCNH uniquement.
 - Indicateurs (dans `sentinel_signals.py`, comme tous les signaux et
   fenetres horaires) : `rsi` (Wilder), `bollinger`, `atr` (Wilder),
   `is_flat_range` (ecart-type Bollinger plat **et** moyenne mobile plate -
@@ -126,7 +127,8 @@ Structure en classes :
 
 ### 3.3 `sentinel_trend.py` - suivi de tendance
 
-- `TREND_PORTFOLIO` : 5 actifs multi-classes, un magic chacun.
+- `TREND_PORTFOLIO` : 6 actifs multi-classes (dont USDCNH depuis
+  2026-07-23), un magic chacun.
 - `donchian(df, n)` : canal des n bougies **precedant** la bougie de signal
   (la cassure ne se compte pas elle-meme).
 - `entry_signal` : cassure du canal 55 -> BUY/SELL. `exit_signal` : cloture

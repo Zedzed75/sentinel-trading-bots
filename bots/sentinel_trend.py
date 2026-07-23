@@ -40,6 +40,9 @@ TREND_PORTFOLIO = {
                "risk_mult": 1.0},
     "XTIUSD": {"magic": 5005, "fallback": ["XTIUSD.p", "SpotCrude", "USOIL"],
                "risk_mult": 0.5},
+    # added 2026-07-23: PBoC/Fed policy divergence diversification play,
+    # clean trending behaviour so far - full risk, no backtest history yet.
+    "USDCNH": {"magic": 5006, "fallback": ["USDCNH.p"], "risk_mult": 1.0},
 }
 TREND_MAGICS = {cfg["magic"] for cfg in TREND_PORTFOLIO.values()}
 
@@ -65,7 +68,7 @@ RISK_SCALE_FILE = os.path.join(_DIR, "risk_scale.json")
 
 log = logging.getLogger("trend")
 
-CCY = {"EUR", "GBP", "USD", "JPY", "CHF", "AUD", "NZD", "CAD"}
+CCY = {"EUR", "GBP", "USD", "JPY", "CHF", "AUD", "NZD", "CAD", "CNH"}
 
 
 def price_fmt(symbol: str) -> str:

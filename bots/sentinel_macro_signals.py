@@ -38,14 +38,15 @@ TRIAGE_THRESHOLD = 7          # score >= 7 -> the item reaches the analyst
 MAX_TRIAGE_ITEMS = 60         # hard cap on the batch (token control)
 
 SIGNAL_ASSETS = ("XAUUSD", "XTIUSD", "XBRUSD", "EURUSD", "GBPUSD",
-                 "US500", "NONE")
+                 "US500", "USDCNH", "NONE")
 SIGNAL_ACTIONS = ("BLOCK_BUY_SIGNALS", "BLOCK_SELL_SIGNALS",
                   "REDUCE_SIZE", "NONE")
 
 PROMPT_TRIAGE = (
     "You are the triage analyst of a quantitative desk. Score each "
     "numbered news item from 1 to 10 for its potential to move the "
-    "fleet's assets TODAY (gold, Brent/WTI, EURUSD, GBPUSD, US500). "
+    "fleet's assets TODAY (gold, Brent/WTI, EURUSD, GBPUSD, US500, "
+    "USDCNH). "
     "10 = likely violent repricing (war escalation, surprise central "
     "bank move, shock release); 5 = notable but priced in; 1 = noise. "
     "Score every item, nothing else.")

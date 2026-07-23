@@ -466,6 +466,16 @@ class TestSources(unittest.TestCase):
         self.assertIn("Trump announces new tariffs on China imports", kept)
         self.assertIn("Fed rates decision looms", kept)
 
+    def test_social_filter_keeps_china_entities(self):
+        # 2026-07-23: USDCNH diversification (PBoC/Fed policy divergence)
+        titles = ["PBoC sets Yuan fixing stronger than expected",
+                  "Beijing unveils new stimulus package",
+                  "State Council approves fiscal measures",
+                  "Celebrity gossip of the day"]
+        kept = ms.filter_social(titles)
+        self.assertEqual(len(kept), 3)
+        self.assertNotIn("Celebrity gossip of the day", kept)
+
     def test_google_news_feed_url(self):
         url = ms.google_news_feed("Donald Trump")
         self.assertIn("news.google.com/rss/search", url)

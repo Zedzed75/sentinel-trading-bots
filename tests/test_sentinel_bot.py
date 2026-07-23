@@ -203,6 +203,14 @@ class TestOrders(unittest.TestCase):
         req = fake_mt5.order_send.call_args[0][0]
         self.assertEqual(req["volume"], 25.0)         # 50.0 (risk_mult=1) / 2
 
+    def test_open_trade_sl_mult_widens_stop_and_tp(self):
+        # 2026-07-23: USDCNH wider-spread SL/TP (ATR=2 fixture, SL=1.5*1.3*2)
+        self.assertTrue(sb.open_trade(XAU, "BUY", XAU_MB, "test",
+                                      sl_mult=1.3))
+        req = fake_mt5.order_send.call_args[0][0]
+        self.assertEqual(req["sl"], 1996.1)           # 2000 - 3.9
+        self.assertEqual(req["tp"], 2007.8)           # 2000 + 2*3.9
+
     def test_no_trade_when_lot_is_zero(self):
         fake_mt5.account_info.return_value = SimpleNamespace(
             balance=1.0, equity=1.0, login=1, currency="USD")
@@ -326,6 +334,26 @@ class TestRunCycle(unittest.TestCase):
         # reversion call has no risk_mult arg -> open_trade's default (1.0)
         self.assertEqual(len(calls["sentinel_reversion"]), 4)
 
+    def test_usdcnh_sl_mult_passed_to_both_strategies(self):
+        fake_mt5.account_info.return_value = SimpleNamespace(
+            balance=10000.0, equity=10000.0)
+        fake_mt5.copy_rates_from_pos.return_value = [
+            {"time": 1752400000 + i * 300, "open": 7.0, "high": 7.01,
+             "low": 6.99, "close": 7.0} for i in range(120)]
+        active = {"USDCNH": {"symbol": "USDCNH.p", "magic_breakout": 4001,
+                             "magic_reversion": 4002, "vix_filter": False,
+                             "breakout": True, "sl_mult": 1.3,
+                             "fixing_blackout": True}}
+        with mock.patch.object(sb, "open_trade") as ot, \
+             mock.patch.object(sb, "breakout_signal", return_value="BUY"), \
+             mock.patch.object(sb, "reversion_signal", return_value="BUY"), \
+             mock.patch.object(ss, "FORCE_TRADING_HOURS", True):
+            sb.run_cycle(active, self.guard, self.macro, {},
+                         now=datetime(2026, 7, 14, 14, tzinfo=UTC))
+        calls = {c[0][3]: c for c in ot.call_args_list}
+        self.assertEqual(calls["sentinel_breakout"].kwargs["sl_mult"], 1.3)
+        self.assertEqual(calls["sentinel_reversion"].kwargs["sl_mult"], 1.3)
+
     def test_breakout_disabled_symbol_skips_m30_scan(self):
         active = {"EURUSD": {"symbol": "EURUSD.p", "magic_breakout": 2001,
                              "magic_reversion": 2002, "vix_filter": False,
@@ -424,6 +452,24 @@ class TestPortfolio(unittest.TestCase):
         self.assertIn("GBPUSD", cm.output[0])
         self.assertEqual(active["XAUUSD"]["breakout_risk_mult"], 0.5)
         self.assertEqual(active["EURUSD"]["breakout_risk_mult"], 1.0)
+        self.assertEqual(active["XAUUSD"]["sl_mult"], 1.0)
+        self.assertFalse(active["XAUUSD"]["fixing_blackout"])
+
+    def test_resolve_symbols_usdcnh_wider_sl_and_fixing_blackout(self):
+        # 2026-07-23: USDCNH diversification (PBoC/Fed policy divergence)
+        avail = {"USDCNH.p"}
+        fake_mt5.symbol_select.side_effect = lambda s, e=True: s in avail
+        fake_mt5.symbol_info.side_effect = (
+            lambda s: SimpleNamespace(name=s) if s in avail else None)
+        self.addCleanup(setattr, fake_mt5.symbol_select, "side_effect", None)
+        self.addCleanup(setattr, fake_mt5.symbol_info, "side_effect", None)
+        active = sb.resolve_symbols()
+        self.assertEqual(active["USDCNH"]["symbol"], "USDCNH.p")
+        self.assertEqual(active["USDCNH"]["magic_breakout"], 4001)
+        self.assertEqual(active["USDCNH"]["magic_reversion"], 4002)
+        self.assertFalse(active["USDCNH"]["vix_filter"])
+        self.assertEqual(active["USDCNH"]["sl_mult"], 1.3)
+        self.assertTrue(active["USDCNH"]["fixing_blackout"])
 
     def test_management_isolated_by_symbol_and_magic(self):
         # a EURUSD position at 1R and a XAU position with a foreign magic
@@ -513,6 +559,73 @@ class TestMacroGate(unittest.TestCase):
         with mock.patch.object(sb, "macro_gate_blocks", return_value=True):
             self.assertFalse(sb.open_trade("XAUUSD.p", "BUY", 1001, "t"))
         fake_mt5.order_send.assert_not_called()
+
+
+# --- PBoC daily fixing blackout (USDCNH only) --------------------------------
+class TestPBoCFixingBlackout(unittest.TestCase):
+    def test_pure_function_boundaries(self):
+        # fixing published 01:15 UTC, blackout window [01:00, 01:30)
+        self.assertFalse(sb.in_pboc_fixing_blackout(
+            datetime(2026, 7, 23, 0, 59, tzinfo=UTC)))
+        self.assertTrue(sb.in_pboc_fixing_blackout(
+            datetime(2026, 7, 23, 1, 0, tzinfo=UTC)))
+        self.assertTrue(sb.in_pboc_fixing_blackout(
+            datetime(2026, 7, 23, 1, 15, tzinfo=UTC)))
+        self.assertTrue(sb.in_pboc_fixing_blackout(
+            datetime(2026, 7, 23, 1, 29, tzinfo=UTC)))
+        self.assertFalse(sb.in_pboc_fixing_blackout(
+            datetime(2026, 7, 23, 1, 30, tzinfo=UTC)))
+
+    def setUp(self):
+        fake_mt5.reset_mock()
+        fake_mt5.account_info.return_value = SimpleNamespace(
+            balance=10000.0, equity=10000.0)
+        fake_mt5.positions_get.return_value = []
+        fake_mt5.orders_get.return_value = []
+        fd, self.path = tempfile.mkstemp(suffix=".json")
+        os.close(fd)
+        os.unlink(self.path)
+        self.guard = sb.DayGuard(self.path)
+        self.macro = mock.MagicMock()
+        self.macro.vix.return_value = 15.0
+
+    def tearDown(self):
+        if os.path.exists(self.path):
+            os.unlink(self.path)
+
+    def test_new_entries_skipped_during_blackout_managed_positions_unaffected(
+            self):
+        active = {"USDCNH": {"symbol": "USDCNH.p", "magic_breakout": 4001,
+                             "magic_reversion": 4002, "vix_filter": False,
+                             "breakout": True, "sl_mult": 1.3,
+                             "fixing_blackout": True}}
+        pos = SimpleNamespace(ticket=1, symbol="USDCNH.p", type=0,
+                              volume=1.0, price_open=7.0, sl=6.9, tp=7.2,
+                              price_current=7.05, magic=4001)
+        fake_mt5.positions_get.return_value = [pos]  # 1R not reached: no-op
+        with mock.patch.object(sb, "open_trade") as ot, \
+             mock.patch.object(ss, "FORCE_TRADING_HOURS", True):
+            sb.run_cycle(active, self.guard, self.macro, {},
+                         now=datetime(2026, 7, 23, 1, 15, tzinfo=UTC))
+        ot.assert_not_called()
+        fake_mt5.copy_rates_from_pos.assert_not_called()  # no new scan either
+        fake_mt5.positions_get.assert_called()             # management still ran
+
+    def test_other_assets_unaffected_by_usdcnh_blackout_flag(self):
+        active = {"EURUSD": {"symbol": "EURUSD.p", "magic_breakout": 2001,
+                             "magic_reversion": 2002, "vix_filter": False,
+                             "breakout": True}}
+        fake_mt5.copy_rates_from_pos.return_value = [
+            {"time": 1752400000 + i * 1800, "open": 2000.0, "high": 2001.0,
+             "low": 1999.0, "close": 2000.0} for i in range(30)]
+        with mock.patch.object(sb, "open_trade") as ot, \
+             mock.patch.object(sb, "breakout_signal", return_value=None), \
+             mock.patch.object(sb, "reversion_signal", return_value=None), \
+             mock.patch.object(ss, "FORCE_TRADING_HOURS", True):
+            sb.run_cycle(active, self.guard, self.macro, {},
+                         now=datetime(2026, 7, 23, 1, 15, tzinfo=UTC))
+        fake_mt5.copy_rates_from_pos.assert_called()  # scan happened normally
+        ot.assert_not_called()  # no signal, but nothing blocked it either
 
 
 # --- Atomic persistence & heartbeat ------------------------------------------

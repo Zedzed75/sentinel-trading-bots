@@ -1,6 +1,6 @@
 """SENTINEL - Multi-asset MetaTrader 5 algorithmic trading bot.
 
-Portfolio: XAUUSD, EURUSD, GBPUSD (see CONFIG_PORTFOLIO).
+Portfolio: XAUUSD, EURUSD, GBPUSD, USDCNH (see CONFIG_PORTFOLIO).
 Strategies (applied to each asset):
   A) Asian session breakout (M30), VIX macro filter.
   B) Bollinger/RSI mean reversion (M5) during range phases.
@@ -55,12 +55,23 @@ CONFIG_PORTFOLIO = {
     "GBPUSD": {"magic_breakout": 3001, "magic_reversion": 3002,
                "fallback": ["GBPUSD.p"], "vix_filter": False,
                "breakout": False},
+    # added 2026-07-23: PBoC/Fed policy divergence diversification play.
+    # sl_mult widens the ATR stop (wider CNH spreads); fixing_blackout
+    # skips new entries around the 01:15 UTC PBoC daily fixing.
+    "USDCNH": {"magic_breakout": 4001, "magic_reversion": 4002,
+               "fallback": ["USDCNH.p"], "vix_filter": False,
+               "breakout": True, "sl_mult": 1.3, "fixing_blackout": True},
 }
 
 RISK_PCT = 0.015              # 1.5% of balance per trade
 ATR_SL_MULT = 1.5             # SL_distance = 1.5 * ATR(14) M30
 RR_RATIO = 2.0                # TP = 2 * SL_distance
 DAILY_DD_LIMIT = 0.04         # circuit breaker at -4% equity vs day balance
+
+# PBoC daily fixing (published 01:15 UTC): optional per-asset blackout on
+# NEW entries only (management/exits unaffected) to dodge fixing slippage.
+PBOC_FIXING_START = (1, 0)
+PBOC_FIXING_END = (1, 30)
 
 VIX_TICKER = "^VIX"
 
@@ -76,6 +87,15 @@ log = logging.getLogger("sentinel")
 # ----------------------------------------------------------------------------
 # Risk management (pure, testable functions)
 # ----------------------------------------------------------------------------
+def in_pboc_fixing_blackout(now: datetime) -> bool:
+    """True during the daily PBoC fixing window (01:00-01:30 UTC).
+
+    Only gates NEW entries on assets with "fixing_blackout": True in
+    CONFIG_PORTFOLIO (USDCNH); management/exits are never affected.
+    """
+    return PBOC_FIXING_START <= (now.hour, now.minute) < PBOC_FIXING_END
+
+
 def reached_one_r(pos_type: int, price_open: float, sl: float,
                   current: float) -> bool:
     """True if the position reached a 1R profit (initial SL distance)."""
@@ -291,7 +311,10 @@ def resolve_symbols() -> dict:
                             "vix_filter": cfg.get("vix_filter", True),
                             "breakout": cfg.get("breakout", True),
                             "breakout_risk_mult":
-                                cfg.get("breakout_risk_mult", 1.0)}
+                                cfg.get("breakout_risk_mult", 1.0),
+                            "sl_mult": cfg.get("sl_mult", 1.0),
+                            "fixing_blackout":
+                                cfg.get("fixing_blackout", False)}
             log.info("Asset %s -> broker symbol %s%s", name, found,
                      "" if active[name]["breakout"]
                      else " (breakout suspended)")
@@ -351,8 +374,12 @@ def send_order(request: dict):
 
 
 def open_trade(symbol: str, direction: str, magic: int, tag: str,
-               risk_mult: float = 1.0) -> bool:
-    """Open a market trade with mandatory SL/TP and dynamic lot size."""
+               risk_mult: float = 1.0, sl_mult: float = 1.0) -> bool:
+    """Open a market trade with mandatory SL/TP and dynamic lot size.
+
+    sl_mult widens the ATR-based stop for assets with wider spreads
+    (e.g. USDCNH); TP scales with it since TP = RR_RATIO * SL distance.
+    """
     if macro_gate_blocks(symbol, direction):
         return False
     acc = mt5.account_info()
@@ -363,7 +390,7 @@ def open_trade(symbol: str, direction: str, magic: int, tag: str,
         log.error("Data unavailable to open a trade: %s",
                   mt5.last_error())
         return False
-    sl_dist = ATR_SL_MULT * float(atr(df_m30).iloc[-1])
+    sl_dist = ATR_SL_MULT * sl_mult * float(atr(df_m30).iloc[-1])
     if sl_dist <= 0:
         log.warning("Zero ATR, trade skipped.")
         return False
@@ -472,10 +499,13 @@ def scan_symbol(name: str, cfg: dict, macro: MacroFilter,
     """Active management + signal detection for one portfolio asset."""
     symbol, mb, mr = cfg["symbol"], cfg["magic_breakout"], cfg["magic_reversion"]
     vf = cfg.get("vix_filter", True)
+    sl_mult = cfg.get("sl_mult", 1.0)
     manage_positions(symbol, (mb, mr))
+    fixing_blackout = (cfg.get("fixing_blackout", False)
+                       and in_pboc_fixing_blackout(now))
 
     # --- Strategy A: M30 breakout (on a new closed candle) ---
-    if (cfg.get("breakout", True)
+    if (cfg.get("breakout", True) and not fixing_blackout
             and in_trading_hours(now, BREAKOUT_HOUR_START,
                                  BREAKOUT_HOUR_END)):
         df_m30 = get_rates(symbol, mt5.TIMEFRAME_M30, 96)
@@ -491,10 +521,12 @@ def scan_symbol(name: str, cfg: dict, macro: MacroFilter,
                     log.info("[%s] BREAKOUT signal %s (Asia H=%s L=%s)",
                              name, sig, fp(symbol, hi), fp(symbol, lo))
                     open_trade(symbol, sig, mb, "sentinel_breakout",
-                              cfg.get("breakout_risk_mult", 1.0))
+                              cfg.get("breakout_risk_mult", 1.0),
+                              sl_mult=sl_mult)
 
     # --- Strategy B: M5 mean reversion (on a new closed candle) ---
-    if in_trading_hours(now, REVERSION_HOUR_START, REVERSION_HOUR_END):
+    if not fixing_blackout and in_trading_hours(now, REVERSION_HOUR_START,
+                                                REVERSION_HOUR_END):
         df_m5 = get_rates(symbol, mt5.TIMEFRAME_M5, 120)
         if df_m5 is not None and len(df_m5) > 2:
             closed = df_m5.iloc[:-1]
@@ -505,7 +537,8 @@ def scan_symbol(name: str, cfg: dict, macro: MacroFilter,
                                          macro.vix(now), vf)
                 if sig and not has_open_position(symbol, mr):
                     log.info("[%s] REVERSION signal %s", name, sig)
-                    open_trade(symbol, sig, mr, "sentinel_reversion")
+                    open_trade(symbol, sig, mr, "sentinel_reversion",
+                              sl_mult=sl_mult)
 
 
 def run_cycle(active: dict, guard: DayGuard, macro: MacroFilter,

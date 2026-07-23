@@ -70,6 +70,12 @@ class TestSignals(unittest.TestCase):
         self.assertTrue(st.exit_signal(make_df(flat + [102.0]), sell))
         self.assertFalse(st.exit_signal(make_df(flat + [100.5]), sell))
 
+    def test_price_fmt_5_decimals_for_forex_incl_usdcnh(self):
+        # 2026-07-23: USDCNH added to CCY, must format like other FX pairs
+        self.assertEqual(st.price_fmt("USDCNH"), "%.5f")
+        self.assertEqual(st.price_fmt("EURUSD"), "%.5f")
+        self.assertEqual(st.price_fmt("XAUUSD"), "%.2f")
+
 
 class TestRiskScale(unittest.TestCase):
     def test_lot_scaled_by_orchestrator_factor(self):
@@ -172,6 +178,12 @@ class TestExecution(unittest.TestCase):
                                ("EURUSD", 0.5), ("GBPUSD", 0.5),
                                ("XTIUSD", 0.5)):
             self.assertEqual(st.TREND_PORTFOLIO[name]["risk_mult"], expected)
+
+    def test_usdcnh_added_full_risk_unique_magic(self):
+        # 2026-07-23: PBoC/Fed policy divergence diversification play
+        self.assertEqual(st.TREND_PORTFOLIO["USDCNH"]["risk_mult"], 1.0)
+        magics = [cfg["magic"] for cfg in st.TREND_PORTFOLIO.values()]
+        self.assertEqual(len(magics), len(set(magics)))  # all unique
 
     def test_risk_mult_halves_volume(self):
         df = pd.DataFrame(self._rates([100.0] * 20))
