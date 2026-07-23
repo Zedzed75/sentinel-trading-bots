@@ -260,6 +260,36 @@ class TestMockMode(unittest.TestCase):
         self.assertIn("margin-bottom: 1.5rem", page)       # nav isolation
         self.assertIn("gap: 2rem", page)                   # tab alignment
 
+    def test_insights_responsive_hybrid_mobile_swipe_desktop_grid(self):
+        # 2026-07-23: mobile swipe (scroll-snap) <1024px, 3-col grid >=1024px
+        client = TestClient(dash.app)
+        with mock.patch.object(dash, "MOCK", True), \
+             mock.patch.object(dash, "_credentials",
+                               return_value=("sentinel", "bon")):
+            page = client.get("/", auth=("sentinel", "bon")).text
+        # mobile-first: swipeable, snapping, one full-width panel at a time
+        self.assertIn("scroll-snap-type: x mandatory", page)
+        self.assertIn("scroll-snap-align: start", page)
+        self.assertIn("overflow-x: auto", page)
+        self.assertIn('class="insights-container"', page)
+        self.assertIn('class="ins-panel"', page)
+        # desktop (>=1024px): nav hidden, 3-column grid, equal-height panels
+        self.assertIn("@media (min-width: 1024px)", page)
+        self.assertIn("display: none", page)
+        self.assertIn("grid-template-columns: repeat(3, 1fr)", page)
+        self.assertIn("gap: 1.5rem", page)
+        self.assertIn("height: 100%", page)
+        # header sync: clickable tabs + JS keeps .active in sync on scroll
+        self.assertIn('class="insights-tabs-nav"', page)
+        self.assertIn('class="ins-tab active"', page)
+        self.assertIn("data-panel=\"panel-theses\"", page)
+        self.assertIn("data-panel=\"panel-banks\"", page)
+        self.assertIn("data-panel=\"panel-conflict\"", page)
+        self.assertIn("IntersectionObserver", page)
+        self.assertIn("classList.toggle(\"active\"", page)
+        # legacy radio-hack tabs fully retired
+        self.assertNotIn('type="radio"', page)
+
 
 class TestArbitrage(unittest.TestCase):
     """Bot 8 section: KPI cards, filtered/paginated datatable, UX rules."""

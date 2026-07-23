@@ -8,23 +8,34 @@
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://cdn.jsdelivr.net/npm/htmx.org@2/dist/htmx.min.js"></script>
 <style>
-  /* Debate & Insights — institutional terminal look (no chat bubbles) */
-  #insights input[type="radio"] { display: none; }
-  #insights .ins-nav { display: flex; align-items: center;
+  /* Debate & Insights — institutional terminal look (no chat bubbles).
+     Responsive hybrid: <1024px = swipeable tabs (scroll-snap, one panel
+     full-width at a time); >=1024px = 3-column grid, all panels visible,
+     tab nav hidden (see media query at the bottom of this block). */
+  #insights .insights-tabs-nav { display: flex; align-items: center;
     justify-content: flex-start; gap: 2rem; margin-bottom: 1.5rem;
     border-bottom: 1px solid #232636; }
-  #insights .ins-nav label { display: flex; align-items: center;
+  #insights .insights-tabs-nav .ins-tab { display: flex; align-items: center;
     gap: 0.4rem; white-space: nowrap; cursor: pointer; padding: 0.45rem 0;
-    font-weight: 600; font-size: 0.8rem; color: #94A3B8;
-    border-bottom: 2px solid transparent; margin-bottom: -1px; }
-  #insights section { display: none; flex-direction: column; gap: 0.75rem; }
-  #ins-theses:checked ~ #panel-theses,
-  #ins-banks:checked ~ #panel-banks,
-  #ins-conflict:checked ~ #panel-conflict { display: flex; }
-  #ins-theses:checked ~ .ins-nav label[for="ins-theses"],
-  #ins-banks:checked ~ .ins-nav label[for="ins-banks"],
-  #ins-conflict:checked ~ .ins-nav label[for="ins-conflict"] {
+    font-weight: 600; font-size: 0.8rem; color: #94A3B8; background: none;
+    border: none; border-bottom: 2px solid transparent; margin-bottom: -1px;
+    font-family: inherit; }
+  #insights .insights-tabs-nav .ins-tab.active {
     color: #E2E8F0; border-bottom-color: #3B82F6; }
+  #insights .insights-container { display: flex; overflow-x: auto;
+    scroll-snap-type: x mandatory; scroll-behavior: smooth;
+    -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+  #insights .insights-container::-webkit-scrollbar { display: none; }
+  #insights .ins-panel { flex: 0 0 100%; min-width: 100%;
+    scroll-snap-align: start; display: flex; flex-direction: column;
+    gap: 0.75rem; box-sizing: border-box; }
+  @media (min-width: 1024px) {
+    #insights .insights-tabs-nav { display: none; }
+    #insights .insights-container { display: grid;
+      grid-template-columns: repeat(3, 1fr); gap: 1.5rem;
+      overflow-x: visible; }
+    #insights .ins-panel { scroll-snap-align: none; height: 100%; }
+  }
   .ins-card { background: #1A1C24; border: 1px solid #232636;
     border-left: 4px solid #64748B; border-radius: 6px;
     padding: 0.75rem 1rem; }
@@ -58,49 +69,89 @@
        hx-swap="innerHTML"></div>
 
   <!-- C. Debate & Insights (bot 7) — static: changes once per day.
-       Institutional terminal look: flat cards with a category border,
-       custom radio tabs (nav isolated from the content flow). -->
+       Institutional terminal look: flat cards with a category border.
+       Responsive hybrid: swipeable tabs (<1024px) / 3-column grid
+       (>=1024px) via scroll-snap + a small vanilla-JS sync (see <style>
+       and the inline <script> below for the two halves of the mechanism). -->
   {% set W = state.weather %}
   <div class="card shadow" style="background:#12131A; border:1px solid #1F2230;">
     <div class="card-body py-4">
       <h2 class="card-title text-base" style="color:#E2E8F0;">🧠 Debate &amp; Insights (Bot 7)</h2>
       {% if W %}
       <div id="insights">
-        <input type="radio" id="ins-theses" name="insights" checked>
-        <input type="radio" id="ins-banks" name="insights">
-        <input type="radio" id="ins-conflict" name="insights">
-        <nav class="ins-nav" role="tablist">
-          <label for="ins-theses" role="tab">⚖️ Clash of Theses</label>
-          <label for="ins-banks" role="tab">💼 Bank Targets</label>
-          <label for="ins-conflict" role="tab">🎯 Conflict</label>
+        <nav class="insights-tabs-nav" role="tablist">
+          <button type="button" class="ins-tab active" data-panel="panel-theses" role="tab" aria-selected="true">⚖️ Clash of Theses</button>
+          <button type="button" class="ins-tab" data-panel="panel-banks" role="tab" aria-selected="false">💼 Bank Targets</button>
+          <button type="button" class="ins-tab" data-panel="panel-conflict" role="tab" aria-selected="false">🎯 Conflict</button>
         </nav>
-        <section id="panel-theses" role="tabpanel">
-          <div class="ins-card" style="border-left-color:#3B82F6;">
-            <h3>🌍 Geopolitics</h3>
-            <p>{{ W.geo_summary or "—" }}</p>
-          </div>
-          <div class="ins-card" style="border-left-color:#10B981;">
-            <h3>🏦 Macro</h3>
-            <p>{{ W.macro_summary or "—" }}</p>
-          </div>
-          <div class="ins-card" style="border-left-color:#F59E0B;">
-            <h3>📣 Sentiment</h3>
-            <p>{{ W.sentiment_summary or "—" }}</p>
-          </div>
-        </section>
-        <section id="panel-banks" role="tabpanel">
-          <div class="ins-card">
-            <h3>💼 Bank desks</h3>
-            <p>{{ W.banks_summary or "no published target" }}</p>
-          </div>
-        </section>
-        <section id="panel-conflict" role="tabpanel">
-          <div class="ins-card" style="border-left-color:#E11D48;">
-            <h3>🎯 Conflict of the day</h3>
-            <p style="font-style:italic;">{{ W.conflict or "no notable conflict" }}</p>
-          </div>
-        </section>
+        <div class="insights-container">
+          <section id="panel-theses" class="ins-panel" role="tabpanel">
+            <div class="ins-card" style="border-left-color:#3B82F6;">
+              <h3>🌍 Geopolitics</h3>
+              <p>{{ W.geo_summary or "—" }}</p>
+            </div>
+            <div class="ins-card" style="border-left-color:#10B981;">
+              <h3>🏦 Macro</h3>
+              <p>{{ W.macro_summary or "—" }}</p>
+            </div>
+            <div class="ins-card" style="border-left-color:#F59E0B;">
+              <h3>📣 Sentiment</h3>
+              <p>{{ W.sentiment_summary or "—" }}</p>
+            </div>
+          </section>
+          <section id="panel-banks" class="ins-panel" role="tabpanel">
+            <div class="ins-card">
+              <h3>💼 Bank desks</h3>
+              <p>{{ W.banks_summary or "no published target" }}</p>
+            </div>
+          </section>
+          <section id="panel-conflict" class="ins-panel" role="tabpanel">
+            <div class="ins-card" style="border-left-color:#E11D48;">
+              <h3>🎯 Conflict of the day</h3>
+              <p style="font-style:italic;">{{ W.conflict or "no notable conflict" }}</p>
+            </div>
+          </section>
+        </div>
       </div>
+      <script>
+      (function () {
+        var root = document.getElementById("insights");
+        if (!root) return;
+        var tabs = root.querySelectorAll(".ins-tab");
+        var container = root.querySelector(".insights-container");
+        var panels = root.querySelectorAll(".ins-panel");
+
+        function setActive(id) {
+          tabs.forEach(function (t) {
+            var on = t.dataset.panel === id;
+            t.classList.toggle("active", on);
+            t.setAttribute("aria-selected", on ? "true" : "false");
+          });
+        }
+
+        tabs.forEach(function (t) {
+          t.addEventListener("click", function () {
+            var panel = document.getElementById(t.dataset.panel);
+            if (panel) {
+              panel.scrollIntoView({behavior: "smooth", block: "nearest",
+                                    inline: "start"});
+            }
+            setActive(t.dataset.panel);
+          });
+        });
+
+        if ("IntersectionObserver" in window) {
+          var obs = new IntersectionObserver(function (entries) {
+            entries.forEach(function (entry) {
+              if (entry.isIntersecting && entry.intersectionRatio >= 0.6) {
+                setActive(entry.target.id);
+              }
+            });
+          }, {root: container, threshold: 0.6});
+          panels.forEach(function (p) { obs.observe(p); });
+        }
+      })();
+      </script>
       {% else %}
       <div class="space-y-2">
         <div class="skeleton h-4 w-full"></div>
