@@ -105,6 +105,16 @@ class TestOutputs(unittest.TestCase):
                       ["action_for_mt5"]["enum"])
         self.assertFalse(msig.TRIAGE_SCHEMA["additionalProperties"])
 
+    def test_schema_accepts_usdcnh(self):
+        # 2026-07-23: USDCNH diversification (PBoC/Fed policy divergence)
+        self.assertIn("USDCNH", msig.SIGNAL_ASSETS)
+        self.assertIn("USDCNH",
+                      msig.SIGNAL_SCHEMA["properties"]
+                      ["asset_affected"]["enum"])
+        self.assertEqual(
+            msig.clamp_signal(dict(SIGNAL, asset_affected="USDCNH")
+                              )["asset_affected"], "USDCNH")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
